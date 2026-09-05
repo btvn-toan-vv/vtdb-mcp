@@ -1,0 +1,21 @@
+repos:
+-   repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.21
+    hooks:
+    -   id: ruff
+        args: [--fix]
+        # Non-package Python (scripts/, demo/, mcp-bench/, .github/) has no
+        # per-package [tool.ruff] config — exclude from the lint/format gate.
+        exclude: ^(scripts/|\.github/).*$
+    -   id: ruff-format
+        exclude: ^(scripts/|\.github/).*$
+
+-   repo: local
+    hooks:
+    -   id: pyright-server
+        name: pyright (packages/server)
+        entry: uv run --project packages/server --no-sync pyright packages/server/src
+        language: system
+        types: [python]
+        pass_filenames: false
+        files: ^packages/server/
