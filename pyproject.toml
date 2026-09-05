@@ -1,0 +1,20 @@
+[project]
+name = "vtdb-mcp"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "naot-wong", email = "toan.vong@bioturing.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "fastmcp>=4.0.3",
+    "fastmcp-docs>=1.0.0",
+]
+
+[project.scripts]
+vtdb-mcp = "vtdb_mcp:main"
+
+[build-system]
+requires = ["uv_build>=0.9.7,<0.10.0"]
+build-backend = "uv_build"
