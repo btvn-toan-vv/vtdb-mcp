@@ -1,0 +1,12 @@
+# Build context hygiene for packages/server (see docker/Dockerfile).
+.venv/
+__pycache__/
+*.py[codz]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+build/
+*.egg-info/
+.dockerignore
+docker/

@@ -1,0 +1,37 @@
+# Alloy only reads pods (+ their logs) inside this namespace, so a Role (not
+# ClusterRole) suffices — discovery.kubernetes in config.alloy is scoped to
+# namespaces.names = ["vtdb-mcp"].
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alloy
+  labels:
+    app.kubernetes.io/component: alloy
+    app.kubernetes.io/part-of: vtdb-mcp
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: alloy-logs
+  labels:
+    app.kubernetes.io/component: alloy
+    app.kubernetes.io/part-of: vtdb-mcp
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "namespaces", "events"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: alloy-logs
+  labels:
+    app.kubernetes.io/component: alloy
+    app.kubernetes.io/part-of: vtdb-mcp
+subjects:
+  - kind: ServiceAccount
+    name: alloy
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: alloy-logs

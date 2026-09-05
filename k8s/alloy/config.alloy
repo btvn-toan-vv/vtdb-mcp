@@ -1,0 +1,108 @@
+// Grafana Alloy pipeline: Kubernetes pod logs -> Loki.
+//
+//   discovery.kubernetes   find pods in this namespace via the API server
+//   discovery.relabel      add stream labels (container, service, pod, namespace)
+//   loki.source.kubernetes tail pod stdout/stderr through the Kubernetes API
+//   loki.process           parse the server's log format into level labels
+//   loki.write             push to Loki
+//
+// The server's plain log format (packages/server/src/server/__main__.py) is
+//   2006-01-02 15:04:05,000 LEVEL logger.name: message
+// If you change that format, update the stage.regex below to match.
+
+logging {
+  level  = "info"
+  format = "logfmt"
+}
+
+// ---- Discover pods -------------------------------------------------------- //
+
+discovery.kubernetes "pods" {
+  role = "pod"
+  // Namespace-scoped: the companion Role (rbac.yaml) only covers vtdb-mcp.
+  namespaces {
+    names = ["vtdb-mcp"]
+  }
+}
+
+discovery.relabel "pods" {
+  targets = discovery.kubernetes.pods.targets
+
+  // Constant label on every stream (loki.source.kubernetes has no `labels`
+  // argument, unlike loki.source.docker — set it here instead).
+  rule {
+    target_label = "app"
+    replacement  = "vtdb-mcp"
+  }
+
+  rule {
+    source_labels = ["__meta_kubernetes_pod_container_name"]
+    target_label  = "container"
+  }
+
+  // The pods set app.kubernetes.io/component (server / alloy / loki /
+  // grafana); expose it as the `service` stream label the dashboard queries.
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_component"]
+    target_label  = "service"
+  }
+
+  rule {
+    source_labels = ["__meta_kubernetes_pod_name"]
+    target_label  = "pod"
+  }
+
+  rule {
+    source_labels = ["__meta_kubernetes_namespace"]
+    target_label  = "namespace"
+  }
+}
+
+// ---- Tail + enrich ---------------------------------------------------------- //
+
+loki.source.kubernetes "pods" {
+  targets    = discovery.relabel.pods.output
+  forward_to = [loki.process.pods.receiver]
+}
+
+loki.process "pods" {
+  // Parse the app's plain log format into fields. Non-matching lines (e.g.
+  // raw multi-line tracebacks) pass through unchanged without a level label.
+  // NOTE: the Kubernetes log API preserves the trailing newline, and RE2's
+  // `$` doesn't match before a final newline — hence the optional `\n?$`.
+  stage.regex {
+    expression = `^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}) (?P<level>DEBUG|INFO|WARNING|ERROR|CRITICAL) (?P<logger>[\w.]+): (?P<msg>.*)\n?$`
+  }
+
+  // Only index the low-cardinality field as a stream label.
+  stage.labels {
+    values = {
+      level = "",
+    }
+  }
+
+  // Use the app's own timestamp as the Loki entry time (UTC inside the slim
+  // container image).
+  stage.timestamp {
+    source = "ts"
+    format = "2006-01-02 15:04:05,000"
+  }
+
+  // The logger name is higher-cardinality context — structured metadata, not
+  // a label, so it stays queryable without fragmenting streams.
+  stage.structured_metadata {
+    values = {
+      logger = "",
+    }
+  }
+
+  forward_to = [loki.write.local.receiver]
+}
+
+// ---- Push to Loki ------------------------------------------------------------- //
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
