@@ -248,7 +248,7 @@ def load_view(
             current,
             expected,
         )
-        ensure_collection(client, view, force=True)
+        created = ensure_collection(client, view, force=True)
 
     # Resume-friendly: ascending row ids means a partial run's point count IS
     # the resume offset. Full re-upsert only when nothing landed yet.

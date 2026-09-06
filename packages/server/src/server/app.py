@@ -51,8 +51,12 @@ class ServerConfig:
         )
 
 
-def create_app(config: ServerConfig) -> Starlette:
-    """Build the ASGI app: FastMCP streamable-http at ``config.mcp_path``."""
+def create_mcp(config: ServerConfig) -> FastMCP:
+    """Build the FastMCP server: tools + the unauthenticated /health route.
+
+    Split out of :func:`create_app` so tests can drive the tool surface via
+    FastMCP's in-memory client without standing up HTTP.
+    """
     mcp = FastMCP(
         name="vtdb-mcp",
         instructions=(
@@ -78,7 +82,12 @@ def create_app(config: ServerConfig) -> Starlette:
         }
         return JSONResponse(payload)
 
-    app = mcp.http_app(path=config.mcp_path, transport="streamable-http")
+    return mcp
+
+
+def create_app(config: ServerConfig) -> Starlette:
+    """Build the ASGI app: FastMCP streamable-http at ``config.mcp_path``."""
+    app = create_mcp(config).http_app(path=config.mcp_path, transport="streamable-http")
     logger.info(
         "MCP server mounted at %s (transport=streamable-http); health at /health",
         config.mcp_path,

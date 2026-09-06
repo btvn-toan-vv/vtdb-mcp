@@ -16,6 +16,17 @@ uv run server                # or: uv run python -m server
 Config via flags or env: `--host/--port/--mcp-path/--debug/--reload`
 (`VTDB_HOST`, `VTDB_PORT`, `VTDB_MCP_PATH`, `VTDB_DEBUG`, `VTDB_RELOAD`).
 
+## Tests
+
+```bash
+uv run pytest                 # packages/server/tests (no network / no Qdrant)
+```
+
+Coverage of the idempotency contract (skip / resume / force-recreate) lives in
+`tests/test_ingest.py` against an in-memory fake Qdrant; the tool surface and
+`/health` in `tests/test_app.py` via FastMCP's in-memory client + Starlette's
+TestClient.
+
 ## Full stack (develop + deploy)
 
 `../../compose.yaml` runs the server + Qdrant + Grafana Alloy/Loki/Grafana on
