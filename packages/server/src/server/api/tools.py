@@ -1,7 +1,7 @@
 """Tool registration — the MCP server's tool surface lives here.
 
 Mirrors exen-mcp's ``api/tools.py`` pattern: a single ``register_tools(mcp,
-...)`` called once from :func:`server.app.create_app`.
+...)`` called once from :func:`server.app.create_mcp`.
 """
 
 from __future__ import annotations
@@ -19,30 +19,22 @@ _STARTED_AT = time.monotonic()
 
 
 def register_tools(mcp: FastMCP) -> None:
-    """Register the demo tools on ``mcp``.
+    """Register the tools on ``mcp``.
 
-    Every tool logs one line per invocation so the Grafana Alloy -> Loki ->
-    Grafana pipeline has a visible stream to tail (try calling ``ping`` a few
-    times, then open the "vtdb-mcp · Logs" dashboard).
+    Tool calls log one line each so the Grafana Alloy -> Loki -> Grafana
+    pipeline has a visible stream to tail (open the "vtdb-mcp · Logs"
+    dashboard and call ``query`` a few times).
     """
 
-    @mcp.tool(name="ping", tags={"meta"})
-    def ping() -> str:
-        """Liveness probe for MCP clients. Always answers "pong"."""
-        logger.info("tool ping invoked")
-        return "pong"
+    @mcp.tool(name="query", tags={"data"})
+    def query(code: str) -> str:
+        """Run ``code`` against the vector database.
 
-    @mcp.tool(name="echo", tags={"demo"})
-    def echo(text: str) -> str:
-        """Echo ``text`` back unchanged — the smallest possible round-trip."""
-        logger.info("tool echo invoked (len=%d)", len(text))
-        return text
-
-    @mcp.tool(name="add", tags={"demo"})
-    def add(a: float, b: float) -> float:
-        """Add two numbers; returns the sum."""
-        logger.info("tool add invoked (a=%s, b=%s)", a, b)
-        return a + b
+        Placeholder for the real executor (see the Qdrant ingest in
+        server.ingest): for now it just echoes ``code`` back unchanged.
+        """
+        logger.info("tool query invoked (len=%d)", len(code))
+        return code
 
     @mcp.tool(name="server_info", tags={"meta"})
     def server_info() -> dict[str, str | float]:

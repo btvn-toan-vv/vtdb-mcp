@@ -30,16 +30,15 @@ def test_tool_registry(mcp: FastMCP) -> None:
         async with Client(mcp) as client:
             return {t.name for t in await client.list_tools()}
 
-    assert asyncio.run(run()) == {"ping", "echo", "add", "server_info"}
+    assert asyncio.run(run()) == {"query", "server_info"}
 
 
-def test_ping_and_echo(call_tool) -> None:
-    assert call_tool("ping", {}).data == "pong"
-    assert call_tool("echo", {"text": "hello"}).data == "hello"
-
-
-def test_add(call_tool) -> None:
-    assert call_tool("add", {"a": 2.5, "b": 1.5}).data == 4.0
+def test_query_echoes_code_placeholder(call_tool) -> None:
+    # Placeholder behavior until the real executor lands: echo the code back.
+    assert (
+        call_tool("query", {"code": "client.count('cells')"}).data
+        == "client.count('cells')"
+    )
 
 
 def test_server_info(call_tool) -> None:

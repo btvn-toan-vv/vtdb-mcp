@@ -2,8 +2,8 @@
 
 A minimal [FastMCP](https://gofastmcp.com) server (streamable-http at `/mcp`,
 unauthenticated `/health` next to it), modeled on
-`~/exen-mcp/packages/server`. Demo tools: `ping`, `echo`, `add`,
-`server_info`.
+`~/exen-mcp/packages/server`. Tools: `query` (placeholder that echoes the
+`code` argument back — the Qdrant executor lands later) and `server_info`.
 
 ## Run locally
 

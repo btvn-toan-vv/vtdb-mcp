@@ -60,8 +60,9 @@ def create_mcp(config: ServerConfig) -> FastMCP:
     mcp = FastMCP(
         name="vtdb-mcp",
         instructions=(
-            "vtdb-mcp — a minimal demo MCP server. "
-            "Tools: `ping`, `echo`, `add`, `server_info`."
+            "vtdb-mcp — MCP server over the subcellular-embeddings vector "
+            "database. Tools: `query` (run code against the collections), "
+            "`server_info`."
         ),
         version=__version__,
         # Return sanitized tool errors to clients; full tracebacks stay in the
