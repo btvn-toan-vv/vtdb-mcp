@@ -22,13 +22,18 @@ Config via flags or env: `--host/--port/--mcp-path/--debug/--reload`
 ## Tests
 
 ```bash
-uv run pytest                 # packages/server/tests (no network / no Qdrant)
+uv run pytest                 # hermetic: unit + synthetic-Qdrant integration
+uv run pytest -m live         # real-dataset smoke (needs compose stack up)
 ```
 
-Coverage of the idempotency contract (skip / resume / force-recreate) lives in
-`tests/test_ingest.py` against an in-memory fake Qdrant; the tool surface and
-`/health` in `tests/test_app.py` via FastMCP's in-memory client + Starlette's
-TestClient.
+Three layers: unit tests (pure python), `test_filtering.py` (hermetic
+integration — throwaway Qdrant container + deterministic synthetic dataset via
+the real ingest path, counts computed from the fixture), and `test_filtering_live.py`
+(marker `live`, exact-count pins against the loaded dev stack; fails loudly when
+the stack is down). Ingest's idempotency contract (skip / resume /
+force-recreate) lives in `tests/test_ingest.py` against an in-memory fake
+Qdrant; tool surface + `/health` in `tests/test_app.py` via FastMCP's
+in-memory client + Starlette's TestClient.
 
 ## Full stack (develop + deploy)
 

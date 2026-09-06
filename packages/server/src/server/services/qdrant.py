@@ -19,6 +19,18 @@ _client: QdrantClient | None = None
 _lock = threading.Lock()
 
 
+def reset_client() -> None:
+    """Drop the cached client (tests repoint env before the next get_client)."""
+    global _client
+    with _lock:
+        if _client is not None:
+            try:
+                _client.close()
+            except Exception:  # noqa: BLE001 — teardown best-effort
+                pass
+            _client = None
+
+
 def get_client() -> QdrantClient:
     """Process-wide Qdrant client (gRPC-preferred), with connect retry."""
     global _client

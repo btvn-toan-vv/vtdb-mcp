@@ -41,6 +41,14 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+# Two data tiers: tier 1 (default) is hermetic (synthetic fixture + throwaway
+# qdrant container); tier 2 is the `live` marker — real dataset pins, opt-in:
+#   uv run pytest            # everything but live
+#   uv run pytest -m live    # the live tier only
+markers = [
+  "live: needs the compose stack with the real dataset loaded (fails loudly)",
+]
+addopts = '-m "not live"'
 filterwarnings = [
   # starlette 1.6.0's TestClient uses the deprecated anyio.abc alias internally
   # (nothing newer published yet); scoped to that module so other deprecations

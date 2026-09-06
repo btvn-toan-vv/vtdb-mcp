@@ -6,6 +6,18 @@ needs explicit `method_filter=None` (default `()` registers nothing); DSL
 keys; the executor's `ExecutionError` gets peeled one level so
 `UnknownFieldError`/`UnknownViewError` surface as first-class error types.
 Everything else is as written below.
+
+### Testing strategy (tiered, 2026-09-06)
+
+- **Tier 1 (default `pytest`)**: hermetic. `tests/test_filtering.py` runs the
+  real MCP tool path against a throwaway Qdrant container (port 56333) loaded
+  with a deterministic synthetic dataset via the real `ingest` code path;
+  expected counts are *computed from the fixture*, never pinned. Skips cleanly
+  when no Docker daemon.
+- **Tier 2 (`pytest -m live`)**: `tests/test_filtering_live.py` — exact-count
+  pins against the full real dataset in the dev stack; fails loudly if run
+  while the stack is down.
+- The old silent-skip socket probe is gone from both tiers.
 Target: make the three `xfail(strict=True)` tests in
 `packages/server/tests/test_filtering.py` pass against the dev stack.
 

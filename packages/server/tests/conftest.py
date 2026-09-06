@@ -11,6 +11,7 @@ Qdrant ingest (see test_ingest.py):
 """
 
 import asyncio
+import time
 from collections.abc import Callable
 from pathlib import Path
 from textwrap import dedent
@@ -24,7 +25,7 @@ from fastmcp import Client, FastMCP
 from fastmcp.client.client import CallToolResult
 from qdrant_client import QdrantClient, models
 from server.app import ServerConfig, create_mcp
-from server.ingest import ViewSpec
+from server.ingest import CELLS, IMAGES, ViewSpec, load_view
 
 # ---- MCP tool surface -------------------------------------------------------
 
@@ -154,6 +155,214 @@ class FakeQdrant:
 @pytest.fixture
 def client() -> FakeQdrant:
     return FakeQdrant()
+
+
+# ---- Hermetic integration stack (test-filtering tier 1) --------------------
+#
+# A real Qdrant container, a synthetic deterministic dataset loaded via the
+# real ingest path, and the DSL pointed at it — zero dependence on the
+# ~/data/subcellular_embeddings snapshot. Needs only local Docker; skips when
+# the daemon is unreachable.
+
+_TEST_QDRANT_PORT = 56333
+_TEST_QDRANT_GRPC_PORT = 56334
+_TEST_QDRANT_CONTAINER = "vtdb-mcp-test-qdrant"
+
+_TEST_ENV = {
+    "QDRANT_HOST": "127.0.0.1",
+    "QDRANT_PORT": str(_TEST_QDRANT_PORT),
+    "QDRANT_GRPC_PORT": str(_TEST_QDRANT_GRPC_PORT),
+}
+
+
+def _docker_usable() -> bool:
+    import shutil
+    import subprocess
+
+    if shutil.which("docker") is None:
+        return False
+    try:
+        subprocess.run(["docker", "info"], capture_output=True, check=True, timeout=15)
+        return True
+    except (subprocess.SubprocessError, FileNotFoundError):
+        return False
+
+
+def _write_synthetic_dataset(base: Path) -> dict[str, dict[str, int]]:
+    """Deterministic views; returns {"cells": {...counts}, "images": {...}}.
+
+    Payload columns mirror the real dataset's schema (sanitized at ingest).
+    Both views get None coverage so is_null paths have real rows.
+    """
+    rng = np.random.default_rng(7)
+    n_cells, n_images = 240, 120
+    cell_line_cycle = ["U2OS", "HeLa", "MCF-7"]
+
+    # ---- cells ----
+    compartment_cycle = ["Nucleoplasm", "Cytosol", None, "Vesicles"]
+    cell_meta = pl.DataFrame(
+        {
+            "cell_id": list(range(n_cells)),
+            "if_plate_id": [807 + i % 3 for i in range(n_cells)],
+            "position": [f"P{i % 96}" for i in range(n_cells)],
+            "sample": [i % 4 for i in range(n_cells)],
+            "cell line": [cell_line_cycle[i % 3] for i in range(n_cells)],
+            "antibody": [f"AB{i % 17}" for i in range(n_cells)],
+            "protein": [f"PROT{i % 23}" for i in range(n_cells)],
+            "ensembl_ids": [f"ENSG{i:011d}" for i in range(n_cells)],
+            "gene_names": [f"G{i % 12:02d}" for i in range(n_cells)],
+            "compartment": [compartment_cycle[i % 4] for i in range(n_cells)],
+            "cell_path": [
+                None if i % 5 == 0 else f"807_P{i % 96}_{i % 4}_{i % 8}.png"
+                for i in range(n_cells)
+            ],
+            "Time (ms)": [
+                None if i % 7 == 0 else 20.0 + (i % 17) * 0.1 for i in range(n_cells)
+            ],
+        }
+    )
+    # ---- images ----
+    img_meta = pl.DataFrame(
+        {
+            "file_prefix": [f"hpa/t{i:04d}" for i in range(n_images)],
+            "cell line": [cell_line_cycle[i % 3] for i in range(n_images)],
+            "protein": [f"PROT{i % 23}" for i in range(n_images)],
+            "antibody": [f"AB{i % 17}" for i in range(n_images)],
+            "genes": [f"G{i % 12:02d}" for i in range(n_images)],
+            "compartment": [compartment_cycle[(i + 1) % 4] for i in range(n_images)],
+            "umap2d x": [float(i % 17) - 8.0 for i in range(n_images)],
+            "umap2d y": [float((i * 3) % 17) - 8.0 for i in range(n_images)],
+            "umap3d x": [float((i * 5) % 17) - 8.0 for i in range(n_images)],
+            "umap3d y": [float((i * 7) % 17) - 8.0 for i in range(n_images)],
+            "umap3d z": [float((i * 11) % 17) - 8.0 for i in range(n_images)],
+        }
+    )
+    for sub in ("cell_embedding", "image_embedding"):
+        (base / sub).mkdir(parents=True, exist_ok=False)
+    np.save(
+        base / "cell_embedding" / "embeddings.npy",
+        rng.random((n_cells, CELLS.dims), dtype=np.float32),
+    )
+    np.save(
+        base / "image_embedding" / "embeddings.npy",
+        rng.random((n_images, IMAGES.dims), dtype=np.float32),
+    )
+
+    def counts(df: pl.DataFrame, view: str) -> dict[str, int]:
+        cl, comp = df["cell line"], df["compartment"]
+        is_null = comp.is_null()
+        out = {
+            "rows": df.height,
+            "u2os": int((cl == "U2OS").sum()),
+            "compartment_null": int(is_null.sum()),
+        }
+        if view == "images":
+            x = df["umap2d x"]
+            out["u2os_pos_x"] = int(((cl == "U2OS") & (x > 0)).sum())
+            out["is_in_pos_x"] = int((cl.is_in(["U2OS", "MCF-7"]) & (x > 0)).sum())
+        else:
+            g07 = df["gene_names"] == "G07"
+            out["null_or_g07"] = int((is_null | g07).sum())
+            out["path_null"] = int(df["cell_path"].is_null().sum())
+        return out
+
+    expected = {
+        "cells": counts(cell_meta, "cells"),
+        "images": counts(img_meta, "images"),
+    }
+    cell_meta.write_csv(base / "cell_embedding" / "metadata.csv")
+    img_meta.write_csv(base / "image_embedding" / "metadata.csv")
+    return expected
+
+
+@pytest.fixture(scope="session")
+def qdrant_test_stack(tmp_path_factory):
+    """Spin a throwaway Qdrant + synthetic dataset; yield per-view facts.
+
+    Skip conditions: no docker daemon, or the image missing (pull once:
+    ``docker pull qdrant/qdrant:v1.19.0``).
+    """
+    import os
+    import subprocess
+
+    if not _docker_usable():
+        pytest.skip("docker daemon unreachable")
+    probe = subprocess.run(
+        ["docker", "image", "inspect", "qdrant/qdrant:v1.19.0"],
+        capture_output=True,
+    )
+    if probe.returncode != 0:
+        subprocess.run(["docker", "pull", "qdrant/qdrant:v1.19.0"], check=True)
+
+    subprocess.run(["docker", "rm", "-f", _TEST_QDRANT_CONTAINER], capture_output=True)
+    subprocess.run(
+        [
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            _TEST_QDRANT_CONTAINER,
+            "-p",
+            f"127.0.0.1:{_TEST_QDRANT_PORT}:6333",
+            "-p",
+            f"127.0.0.1:{_TEST_QDRANT_GRPC_PORT}:6334",
+            "qdrant/qdrant:v1.19.0",
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+    from qdrant_client import QdrantClient
+
+    test_client = QdrantClient(
+        host="127.0.0.1",
+        port=_TEST_QDRANT_PORT,
+        grpc_port=_TEST_QDRANT_GRPC_PORT,
+        prefer_grpc=True,
+        timeout=120,
+        check_compatibility=False,
+    )
+    import urllib.request
+
+    for _ in range(60):
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{_TEST_QDRANT_PORT}/healthz", timeout=1
+            ) as r:
+                if r.status == 200:
+                    break
+        except OSError:
+            time.sleep(0.5)
+    else:
+        subprocess.run(
+            ["docker", "rm", "-f", _TEST_QDRANT_CONTAINER], capture_output=True
+        )
+        pytest.fail("test qdrant container never became healthy")
+
+    base = tmp_path_factory.mktemp("dataset")
+    expected = _write_synthetic_dataset(base)
+    load_view(test_client, CELLS, base, limit=0, force=False)
+    load_view(test_client, IMAGES, base, limit=0, force=False)
+    test_client.count("cells")  # post-condition sanity
+
+    # Point the DSL's client factory at the test container for this session.
+    old_env = {k: os.environ.get(k) for k in _TEST_ENV}
+    os.environ.update(_TEST_ENV)
+    from server.services.qdrant import reset_client
+
+    reset_client()
+    try:
+        yield expected
+    finally:
+        for k, v in old_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        reset_client()
+        subprocess.run(
+            ["docker", "rm", "-f", _TEST_QDRANT_CONTAINER], capture_output=True
+        )
 
 
 def as_client(fake: FakeQdrant) -> QdrantClient:
