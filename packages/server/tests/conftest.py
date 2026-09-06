@@ -13,6 +13,7 @@ Qdrant ingest (see test_ingest.py):
 import asyncio
 from collections.abc import Callable
 from pathlib import Path
+from textwrap import dedent
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -26,6 +27,17 @@ from server.app import ServerConfig, create_mcp
 from server.ingest import ViewSpec
 
 # ---- MCP tool surface -------------------------------------------------------
+
+
+def dedent_code(s: str) -> str:
+    """Indentation-friendly multi-line query strings: dedent + strip the
+    surrounding blank lines, so a test can write code aligned with the call.
+
+        call_tool("query", {"code": dedent_code(\"\"\"
+            output({'hello': 1 + 2.0})
+        \"\"\")})
+    """
+    return dedent(s).strip("\n")
 
 
 @pytest.fixture
