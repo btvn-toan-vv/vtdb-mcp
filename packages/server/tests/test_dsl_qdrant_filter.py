@@ -93,7 +93,11 @@ def test_null_semantics_empty_not_null() -> None:
 
 
 def test_eq_none_becomes_is_null() -> None:
-    f = _translate(col("compartment") == None)  # noqa: E711  (overloaded DSL op, not a comparison)
+    # `== None` is an overloaded DSL operator here (builds an is-null
+    # FilterExpr), not a truthy comparison — E711 is silenced for this file via
+    # per-file-ignores in the repo-root pyproject (the noqa form kept getting
+    # stripped by formatting tools).
+    f = _translate(col("compartment") == None)
     assert _cond_keys(f) == [("IsEmpty", "compartment")]
 
 

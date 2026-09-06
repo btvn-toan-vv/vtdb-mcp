@@ -4,3 +4,8 @@ extend-exclude = [
     "*.md",
     ".github/",
 ]
+[tool.ruff.lint.per-file-ignores]
+# `== None` in test_dsl_qdrant_filter.py is an overloaded DSL comparison over
+# FieldExpr (builds an is-null FilterExpr), not a boolean check — the noqa
+# comment form kept getting stripped by formatters, so pin it here instead.
+"packages/server/tests/test_dsl_qdrant_filter.py" = ["E711"]
