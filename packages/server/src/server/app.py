@@ -20,6 +20,7 @@ from starlette.responses import JSONResponse, Response
 
 from server import __version__
 from server.api.tools import register_tools
+from server.core.context import VtdbSymbolContext
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,10 @@ def create_mcp(config: ServerConfig) -> FastMCP:
         # server log (same posture as exen-mcp).
         mask_error_details=True,
     )
-    register_tools(mcp)
+    # Phase 0: empty registry. Once the Qdrant-backed functions exist, the app
+    # context will build/populate this (exen: sym_ctx from init_app_context).
+    sym_ctx = VtdbSymbolContext()
+    register_tools(mcp, sym_ctx)
 
     @mcp.custom_route("/health", methods=["GET"], include_in_schema=False)
     async def get_health(request: Request) -> Response:

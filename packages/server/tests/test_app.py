@@ -33,12 +33,12 @@ def test_tool_registry(mcp: FastMCP) -> None:
     assert asyncio.run(run()) == {"query", "server_info"}
 
 
-def test_query_echoes_code_placeholder(call_tool) -> None:
-    # Placeholder behavior until the real executor lands: echo the code back.
-    assert (
-        call_tool("query", {"code": "client.count('cells')"}).data
-        == "client.count('cells')"
-    )
+def test_query_executes_with_output_sink(call_tool) -> None:
+    # The tool wraps the result dict as structured output; the contract itself
+    # (output() semantics, errors, serialization) is covered in test_query.py.
+    assert call_tool("query", {"code": "output({'sum': 40 + 2})"}).data == {
+        "result": {"sum": 42}
+    }
 
 
 def test_server_info(call_tool) -> None:

@@ -22,16 +22,16 @@ from fastmcp.exceptions import ToolError
 
 def test_tool_happy_path(call_tool):
     """Call a tool and assert on the parsed result."""
-    result = call_tool("query", {"code": "print('hello cells')"})
+    result = call_tool("query", {"code": "output({'hello': 1 + 2.0})"})
     assert result.is_error is False
-    assert result.data == "print('hello cells')"
+    assert result.data == {"result": {"hello": 3.0}}
 
 
-def test_tool_with_string_payload(call_tool):
-    result = call_tool("query", {"code": "client.count('cells')"})
-    assert result.data == "client.count('cells')"
+def test_tool_result_surface(call_tool):
+    result = call_tool("query", {"code": "output('cells!')"})
+    assert result.data == {"result": "cells!"}
     # The full MCP content is there when you need the wire-level view:
-    assert result.content[0].text == "client.count('cells')"
+    assert result.content[0].text
 
 
 def test_tool_schema_error(call_tool):
@@ -57,7 +57,7 @@ def test_tool_metadata(mcp):
     # (input_schema was camelCase inputSchema pre MCP SDK v2; the alias only
     # exists as a deprecated shim — use the snake_case field.)
     assert tools["query"].description
-    assert set(tools["query"].input_schema["properties"]) == {"code"}
+    assert set(tools["query"].input_schema["properties"]) == {"code", "debug"}
     assert tools["query"].input_schema["properties"]["code"]["type"] == "string"
 
 

@@ -2,8 +2,10 @@
 
 A minimal [FastMCP](https://gofastmcp.com) server (streamable-http at `/mcp`,
 unauthenticated `/health` next to it), modeled on
-`~/exen-mcp/packages/server`. Tools: `query` (placeholder that echoes the
-`code` argument back — the Qdrant executor lands later) and `server_info`.
+`~/exen-mcp/packages/server`. Tools: `query` (runs sandboxed Python via the
+biocircle trace→seal→run spine against a `VtdbSymbolContext` — Phase 0: no
+custom symbols, so `output({'hello': 1 + 2.0})` is the shape of it) and
+`server_info`.
 
 ## Run locally
 

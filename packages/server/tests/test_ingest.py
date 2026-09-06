@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 from qdrant_client import models
-
 from server.ingest import (
     _INDEXING_THRESHOLD_DEFAULT,
     _INDEXING_THRESHOLD_DEFERRED,
@@ -18,7 +17,6 @@ from server.ingest import (
 )
 
 from .conftest import FakeQdrant, as_client
-
 
 # ---- helpers -------------------------------------------------------------
 
