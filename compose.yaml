@@ -147,6 +147,17 @@ services:
       - "127.0.0.1:${ALLOY_PORT:-12345}:12345"
     restart: unless-stopped
 
+  # Temporary public URL via a Cloudflare quick tunnel (no account/keys).
+  # After `up`, grab the URL:  docker compose logs cloudflared | grep trycloudflare
+  # ⚠ exposes everything on the upstream WITHOUT auth — temporary testing only.
+  cloudflared:
+    image: cloudflare/cloudflared:2026.2.0
+    command: tunnel --no-autoupdate --url ${TUNNEL_UPSTREAM:-http://server:8000}
+    depends_on:
+      server:
+        condition: service_healthy
+    restart: unless-stopped
+
   grafana:
     image: grafana/grafana:12.1.1
     environment:

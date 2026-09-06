@@ -54,6 +54,18 @@ http://localhost:8000/mcp · tool docs http://localhost:8000/mcp/docs
 (swagger-style, fastmcp-docs; off with VTDB_DOCS=0) · Qdrant
 http://localhost:6333/dashboard.
 
+Temporary public URL for external testing (Cloudflare quick tunnel — no
+account needed, new random hostname on every up):
+
+```bash
+docker compose up -d cloudflared
+docker compose logs cloudflared | grep trycloudflare   # the public URL
+# upstream swappable: TUNNEL_UPSTREAM=http://grafana:3000 docker compose up -d cloudflared
+```
+
+⚠ The tunnel publishes the upstream WITHOUT any auth (MCP `query` included)
+— public testing only; `docker compose stop cloudflared` when done.
+
 ### Qdrant bootstrap (`server.ingest`)
 
 The one-shot `ingest` service loads the subcellular-embeddings dataset
