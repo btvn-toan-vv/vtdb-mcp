@@ -17,7 +17,7 @@ from server.ingest import (
     wait_for_green,
 )
 
-from .conftest import FakeQdrant
+from .conftest import FakeQdrant, as_client
 
 
 # ---- helpers -------------------------------------------------------------
@@ -47,12 +47,15 @@ def test_iter_points_ids_and_payload(view: ViewSpec, dataset: Path) -> None:
     assert [p.id for p in points] == [0, 1, 2, 3, 4]
 
     # payload keys sanitized; None values dropped (row 1 has no compartment)
-    p0 = points[0].payload
+    p0, p1 = points[0].payload, points[1].payload
+    assert p0 is not None and p1 is not None
     assert p0["cell_line"] == "HeLa"
     assert p0["time_ms"] == pytest.approx(21.1)
     assert "time (ms)" not in p0
-    assert "compartment" not in points[1].payload
-    assert len(points[0].vector) == view.dims
+    assert "compartment" not in p1
+    vector = points[0].vector
+    assert isinstance(vector, list)
+    assert len(vector) == view.dims
 
 
 def test_iter_points_limit(view: ViewSpec, dataset: Path) -> None:
@@ -84,7 +87,7 @@ def test_iter_points_shape_mismatch(
 
 
 def test_ensure_collection_creates(client: FakeQdrant, view: ViewSpec) -> None:
-    assert ensure_collection(client, view, force=False) is True
+    assert ensure_collection(as_client(client), view, force=False) is True
 
     coll = client.collections[view.collection]
     assert coll["vectors"].size == view.dims
@@ -95,33 +98,33 @@ def test_ensure_collection_creates(client: FakeQdrant, view: ViewSpec) -> None:
 
 
 def test_ensure_collection_skips_existing(client: FakeQdrant, view: ViewSpec) -> None:
-    ensure_collection(client, view, force=False)
+    ensure_collection(as_client(client), view, force=False)
     calls_before = list(client.calls)
 
-    assert ensure_collection(client, view, force=False) is False
+    assert ensure_collection(as_client(client), view, force=False) is False
     assert "delete_collection" not in calls_before
     assert client.calls == calls_before  # untouched on the skip path
 
 
 def test_ensure_collection_force_recreates(client: FakeQdrant, view: ViewSpec) -> None:
-    ensure_collection(client, view, force=False)
+    ensure_collection(as_client(client), view, force=False)
     client.calls.clear()
 
-    assert ensure_collection(client, view, force=True) is True
+    assert ensure_collection(as_client(client), view, force=True) is True
     assert "delete_collection" in client.calls
 
 
 def test_ensure_collection_recreates_on_drift(
     client: FakeQdrant, view: ViewSpec
 ) -> None:
-    ensure_collection(client, view, force=False)
+    ensure_collection(as_client(client), view, force=False)
     # Simulate a stale schema from an older dataset version.
     client.collections[view.collection]["vectors"] = models.VectorParams(
         size=view.dims + 1, distance=models.Distance.COSINE
     )
     client.calls.clear()
 
-    assert ensure_collection(client, view, force=False) is True
+    assert ensure_collection(as_client(client), view, force=False) is True
     assert "delete_collection" in client.calls
     assert client.collections[view.collection]["vectors"].size == view.dims
 
@@ -132,24 +135,24 @@ def test_ensure_collection_recreates_on_drift(
 def test_load_view_full_then_skip(
     client: FakeQdrant, view: ViewSpec, dataset: Path
 ) -> None:
-    load_view(client, view, dataset, limit=0, force=False)
+    load_view(as_client(client), view, dataset, limit=0, force=False)
     assert _uploaded_ids(client, view.collection) == {0, 1, 2, 3, 4}
     # HNSW indexing threshold restored after the load.
     updated = client.collections[view.collection]["updated_optimizers"]
     assert updated[-1].indexing_threshold == _INDEXING_THRESHOLD_DEFAULT
 
     uploads_before = client.uploads
-    load_view(client, view, dataset, limit=0, force=False)
+    load_view(as_client(client), view, dataset, limit=0, force=False)
     assert client.uploads == uploads_before  # second run: nothing re-uploaded
 
 
 def test_load_view_resumes_partial(
     client: FakeQdrant, view: ViewSpec, dataset: Path
 ) -> None:
-    ensure_collection(client, view, force=False)
+    ensure_collection(as_client(client), view, force=False)
     client.seed_points(view.collection, range(3))  # pretend a run died at row 3
 
-    load_view(client, view, dataset, limit=0, force=False)
+    load_view(as_client(client), view, dataset, limit=0, force=False)
 
     assert _uploaded_ids(client, view.collection) == {0, 1, 2, 3, 4}
     # Only the missing rows were uploaded; seeded points were not overwritten.
@@ -161,18 +164,18 @@ def test_load_view_recreate_on_overshoot(
 ) -> None:
     # Dataset shrank since the last load (7 stale points for a 5-row view) —
     # resuming makes no sense, so the collection is rebuilt from scratch.
-    ensure_collection(client, view, force=False)
+    ensure_collection(as_client(client), view, force=False)
     client.seed_points(view.collection, range(7))
     client.calls.clear()
 
-    load_view(client, view, dataset, limit=0, force=False)
+    load_view(as_client(client), view, dataset, limit=0, force=False)
 
     assert "delete_collection" in client.calls
     assert _uploaded_ids(client, view.collection) == {0, 1, 2, 3, 4}
 
 
 def test_load_view_limit(client: FakeQdrant, view: ViewSpec, dataset: Path) -> None:
-    load_view(client, view, dataset, limit=3, force=False)
+    load_view(as_client(client), view, dataset, limit=3, force=False)
     assert _uploaded_ids(client, view.collection) == {0, 1, 2}
 
 
@@ -180,12 +183,14 @@ def test_load_view_missing_dataset(
     client: FakeQdrant, view: ViewSpec, tmp_path: Path
 ) -> None:
     with pytest.raises(FileNotFoundError, match="dataset view missing"):
-        load_view(client, view, tmp_path, limit=0, force=False)
+        load_view(as_client(client), view, tmp_path, limit=0, force=False)
 
 
 # ---- green-status wait ----------------------------------------------------
 
 
 def test_wait_for_green_immediate(client: FakeQdrant, view: ViewSpec) -> None:
-    ensure_collection(client, view, force=False)
-    wait_for_green(client, timeout_s=1.0)  # all GREEN in the fake — returns at once
+    ensure_collection(as_client(client), view, force=False)
+    wait_for_green(
+        as_client(client), timeout_s=1.0
+    )  # all GREEN in the fake — returns at once

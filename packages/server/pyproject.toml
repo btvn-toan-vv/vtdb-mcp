@@ -40,3 +40,9 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+filterwarnings = [
+  # starlette 1.6.0's TestClient uses the deprecated anyio.abc alias internally
+  # (nothing newer published yet); scoped to that module so other deprecations
+  # still surface.
+  "ignore::DeprecationWarning:starlette.testclient",
+]

@@ -1,19 +1,56 @@
-"""Shared fixtures: a fake Qdrant client and a tiny synthetic dataset view.
+"""Shared fixtures for the server tests.
 
-The fake mirrors just the methods server.ingest exercises, backed by plain
-dicts — no server, no network. The dataset view follows the real layout:
-``<view>/embeddings.npy`` + ``metadata.csv`` (row-aligned).
+App surface (see tests/test_client_template.py for copy-paste examples):
+    mcp        fresh FastMCP server, tools registered, no HTTP
+    call_tool  sync bridge: call_tool("echo", {"text": "x"}).data
+
+Qdrant ingest (see test_ingest.py):
+    client     in-memory FakeQdrant mirroring the client methods ingest uses
+    view       tiny ViewSpec (4-d)
+    dataset    synthetic <view>/embeddings.npy + metadata.csv in tmp_path
 """
 
+import asyncio
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 import numpy as np
 import polars as pl
 import pytest
-from qdrant_client import models
-
+from fastmcp import Client, FastMCP
+from fastmcp.client.client import CallToolResult
+from qdrant_client import QdrantClient, models
+from server.app import ServerConfig, create_mcp
 from server.ingest import ViewSpec
+
+# ---- MCP tool surface -------------------------------------------------------
+
+
+@pytest.fixture
+def mcp() -> FastMCP:
+    """Fresh FastMCP server per test (tools + custom routes, no HTTP layer)."""
+    return create_mcp(ServerConfig())
+
+
+@pytest.fixture
+def call_tool(mcp: FastMCP) -> Callable[..., CallToolResult]:
+    """Synchronous tool call over the in-memory client: each call opens and
+    closes its own session, so tests stay stateless and asyncio-free.
+
+        result = call_tool("echo", {"text": "hi"})
+        assert result.data == "hi"
+    """
+
+    def _call(name: str, arguments: dict[str, Any] | None = None) -> CallToolResult:
+        async def _run() -> CallToolResult:
+            async with Client(mcp) as client:
+                return await client.call_tool(name, arguments or {})
+
+        return asyncio.run(_run())
+
+    return _call
 
 
 class FakeQdrant:
@@ -105,6 +142,17 @@ class FakeQdrant:
 @pytest.fixture
 def client() -> FakeQdrant:
     return FakeQdrant()
+
+
+def as_client(fake: FakeQdrant) -> QdrantClient:
+    """Type-boundary cast: the fake is a structural stand-in for QdrantClient.
+
+    Tests grab fake internals (``fake.collections``, ``fake.uploads``) AND hand
+    the same object to ingest functions that declare ``QdrantClient`` — cast at
+    the boundary rather than typing the fake as the real client (which would
+    hide fake-only attributes from Pylance).
+    """
+    return cast(QdrantClient, fake)
 
 
 @pytest.fixture
