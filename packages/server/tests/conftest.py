@@ -290,11 +290,16 @@ def qdrant_test_stack(tmp_path_factory):
     probe = subprocess.run(
         ["docker", "image", "inspect", "qdrant/qdrant:v1.19.0"],
         capture_output=True,
+        check=False,
     )
     if probe.returncode != 0:
         subprocess.run(["docker", "pull", "qdrant/qdrant:v1.19.0"], check=True)
 
-    subprocess.run(["docker", "rm", "-f", _TEST_QDRANT_CONTAINER], capture_output=True)
+    subprocess.run(
+        ["docker", "rm", "-f", _TEST_QDRANT_CONTAINER],
+        capture_output=True,
+        check=False,
+    )
     subprocess.run(
         [
             "docker",
@@ -335,7 +340,9 @@ def qdrant_test_stack(tmp_path_factory):
             time.sleep(0.5)
     else:
         subprocess.run(
-            ["docker", "rm", "-f", _TEST_QDRANT_CONTAINER], capture_output=True
+            ["docker", "rm", "-f", _TEST_QDRANT_CONTAINER],
+            capture_output=True,
+            check=False,
         )
         pytest.fail("test qdrant container never became healthy")
 
@@ -361,7 +368,9 @@ def qdrant_test_stack(tmp_path_factory):
                 os.environ[k] = v
         reset_client()
         subprocess.run(
-            ["docker", "rm", "-f", _TEST_QDRANT_CONTAINER], capture_output=True
+            ["docker", "rm", "-f", _TEST_QDRANT_CONTAINER],
+            capture_output=True,
+            check=False,
         )
 
 

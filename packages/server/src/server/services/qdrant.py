@@ -26,8 +26,8 @@ def reset_client() -> None:
         if _client is not None:
             try:
                 _client.close()
-            except Exception:  # noqa: BLE001 — teardown best-effort
-                pass
+            except Exception as exc:  # noqa: BLE001 — teardown best-effort
+                logger.debug("Qdrant client close failed during reset: %s", exc)
             _client = None
 
 

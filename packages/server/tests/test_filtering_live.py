@@ -7,7 +7,7 @@ when the dataset changes, these pins change with it. Opt-in ONLY:
 """
 
 import socket
-from typing import Callable
+from collections.abc import Callable
 
 import pytest
 from fastmcp.client.client import CallToolResult

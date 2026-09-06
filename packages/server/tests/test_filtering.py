@@ -11,7 +11,7 @@ unknown fields fail resolve with the available list. Comparison parentheses
 matter (see the module-level note in dsl/expressions.py).
 """
 
-from typing import Callable
+from collections.abc import Callable
 
 from fastmcp.client.client import CallToolResult
 
