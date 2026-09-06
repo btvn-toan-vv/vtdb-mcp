@@ -15,7 +15,11 @@ pre-loaded in the query namespace.
   parenthesized before `&` / `|`; `.is_in([...])`, `.is_null() / .is_not_null()`,
   `col("x").str.contains("…")`.
 - `db.resolve_ids(expr)` → point ids; `db.count(expr)` → int;
-  `db.meta(ids_or_filter, columns=[...])` → payload rows (dicts, `id` attached).
+  `db.meta(ids_or_filter, columns=[...])` → payload rows (dicts, `id` attached);
+  `db.search(like=<id | [ids] | filter>, among=<filter|None>, k=10)` → top-k
+  rows by cosine to the anchor(s)' (centroid) vector
+  (`{"id", "score", ...payload}`; `among=None` = the whole view; an anchor that
+  matches the filter leads with score 1.0).
 
 Unknown-name errors list the available vocabulary — the same list grows as
 more functions get registered on the server.

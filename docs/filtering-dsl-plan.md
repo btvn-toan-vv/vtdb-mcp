@@ -23,6 +23,14 @@ Everything else is as written below.
 
 - 2026-09-06: `ViewHandle.meta` — payload fetch by ids / filter / projection
   (plan: `docs/meta-feature-plan.md`; contract: `tests/test_meta.py`).
+- 2026-09-06: `ViewHandle.search` — filtered top-k by anchor id; anchor vector
+  is fetched and passed explicitly (Qdrant's id-as-query self-excludes, which
+  the tests pin otherwise); ANN by default, `exact=True` for deterministic
+  brute-force within the filtered set (contract: `tests/test_search.py`).
+- 2026-09-06: search signature finalized as `search(among=None|FilterExpr,
+  k=10, like=int|list[int]|FilterExpr, columns=None, with_vector=False,
+  exact=False)` — `among` names the candidate pool; `like` aggregates multiple
+  anchors by centroid (cosine is scale-invariant; no normalization needed).
 Target: make the three `xfail(strict=True)` tests in
 `packages/server/tests/test_filtering.py` pass against the dev stack.
 

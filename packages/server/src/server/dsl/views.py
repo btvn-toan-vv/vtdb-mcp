@@ -12,6 +12,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import numpy as np
+from qdrant_client import models
+
 from server.dsl.expressions import DSLUsageError, FilterExpr, iter_fields
 from server.dsl.qdrant_filter import to_qdrant_filter
 from server.dsl.schema import FIELDS, VIEW_ALIASES
@@ -201,6 +204,138 @@ class ViewHandle:
         by_id = {int(r.id): self._row(r, cols) for r in records}
         rows = [by_id[i] for i in ids if i in by_id]  # request order; drops missing
         logger.info("meta %s: %d/%d ids", self._collection, len(rows), len(ids))
+        return rows
+
+    # -- filtered top-k search (tests/test_search.py pins the contract) ------
+
+    def _scored_row(
+        self, point: Any, columns: list[str] | None, with_vector: bool
+    ) -> dict[str, Any]:
+        row = self._row(point, columns)
+        row["score"] = float(point.score)
+        if with_vector:
+            row["vector"] = list(point.vector)  # dense unnamed vector
+        return row
+
+    def _anchor_vector(self, like: int | list[int] | FilterExpr | None) -> list[float]:
+        """Resolve `like` to a query vector: anchor point's own vector, or the
+        centroid (mean) for a list of ids / a FilterExpr's resolved ids.
+
+        Cosine distance is invariant to scaling of the query vector, so the
+        mean needs no normalization.
+        """
+        if isinstance(like, FilterExpr):
+            # Filtered anchor set → centroid. NOT resolve_ids(): its 100k cap
+            # exists for user-facing id fetches, while anchor sets on real
+            # filters are routinely larger (U2OS cells ≈ 300k). Scroll ids
+            # directly, no cap, size logged ahead of the mean.
+            self._validate_fields(like)
+            filt = to_qdrant_filter(like)
+            total = self.count(like)
+            logger.info("anchor filter resolved %d ids in %s", total, self._collection)
+            ids_from_filter: list[int] = []
+            offset: Any = None
+            while True:
+                page, offset = get_client().scroll(
+                    collection_name=self._collection,
+                    scroll_filter=filt,
+                    limit=_SCROLL_PAGE,
+                    offset=offset,
+                    with_payload=False,
+                    with_vectors=False,
+                )
+                ids_from_filter.extend(int(p.id) for p in page)
+                if offset is None:
+                    break
+            like = ids_from_filter
+        if isinstance(like, bool):
+            ids: list[int] = []
+        elif isinstance(like, int):
+            ids = [like]
+        elif isinstance(like, list) and all(
+            isinstance(i, int) and not isinstance(i, bool) for i in like
+        ):
+            ids = list(like)
+        else:
+            raise DSLUsageError(
+                "like= expects a point id, a list of point ids, or a filter "
+                "expression (e.g. col('x') == 1 resolved to ids)"
+            )
+        if not ids:
+            raise DSLUsageError("like= resolved to zero anchor ids")
+
+        records = get_client().retrieve(
+            collection_name=self._collection,
+            ids=ids,
+            with_payload=False,
+            with_vectors=True,
+        )
+        found = {int(r.id) for r in records}
+        missing = [i for i in ids if i not in found]
+        if missing:
+            raise DSLUsageError(
+                f"anchor id(s) {missing[:5]}{'…' if len(missing) > 5 else ''} "
+                f"not found in view {self._collection!r}"
+            )
+        vectors = [r.vector for r in records]
+        assert all(isinstance(v, list) for v in vectors)  # dense unnamed vecs
+        centroid = np.asarray(vectors, dtype=np.float32).mean(axis=0)
+        return centroid.tolist()
+
+    def search(
+        self,
+        like: int | list[int] | FilterExpr | None = None,
+        among: FilterExpr | None = None,
+        k: int = 10,
+        columns: list[str] | None = None,
+        with_vector: bool = False,
+        exact: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Top-k payload rows by similarity to ``like``, **among** a filtered pool.
+
+        ``like`` (first arg) is a point id, a list of point ids (centroid), or
+        a FilterExpr (resolved ids → centroid) — the query direction.
+        ``among`` is the candidate pool (None = the whole view).
+        ``like`` is a point id, a list of point ids (centroid anchor), or a
+        FilterExpr (its resolved ids → centroid). Rows are
+        ``{"id", "score", ...payload}`` ordered by score DESC. ``exact=True``
+        turns off the HNSW approximation (brute-force within the filtered set).
+        """
+        cols = self._validate_columns(columns)
+
+        among_given = among
+        if not (among is None or isinstance(among, FilterExpr)):
+            raise DSLUsageError(
+                "search's `among` argument must be a filter expression like "
+                f"col('x') == 1 (or None = the whole view), got {type(among_given).__name__}"
+            )
+        self._validate_fields(among)
+
+        if like is None:
+            raise DSLUsageError(
+                "search needs like=<point id | list of ids | filter expr> — "
+                "the anchor vector(s) whose (centroid) direction to rank by"
+            )
+        if not isinstance(k, int) or isinstance(k, bool) or k <= 0:
+            raise DSLUsageError(f"k must be a positive int, got {k!r}")
+
+        anchor_vec = self._anchor_vector(like)
+        client = get_client()
+
+        hits = client.query_points(
+            collection_name=self._collection,
+            query=anchor_vec,  # the anchor's own vector (see docstring)
+            query_filter=to_qdrant_filter(among),
+            limit=k,
+            with_payload=cols if cols is not None else True,
+            with_vectors=with_vector,
+            # NOTE: the client kwarg is search_params (REST field: params).
+            search_params=models.SearchParams(exact=True) if exact else None,
+        ).points
+        rows = [self._scored_row(p, cols, with_vector) for p in hits]
+        logger.info(
+            "search %s: %d hits (k=%d, like=%d)", self._collection, len(rows), k, like
+        )
         return rows
 
 
