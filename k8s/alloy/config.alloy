@@ -6,9 +6,10 @@
 //   loki.process           parse the server's log format into level labels
 //   loki.write             push to Loki
 //
-// The server's plain log format (packages/server/src/server/__main__.py) is
+// The server's plain log format (packages/server/src/server/log.py) is
 //   2006-01-02 15:04:05,000 LEVEL logger.name: message
-// If you change that format, update the stage.regex below to match.
+// If you change that format, update the stage.regex below (and in
+// docker/alloy/config.alloy, the dev-compose sibling) to match.
 
 logging {
   level  = "info"

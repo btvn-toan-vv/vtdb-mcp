@@ -1,0 +1,124 @@
+# vtdb-mcp DEV stack — the same server + log pipeline as k8s/, but on plain
+# Docker for a fast laptop inner loop. k8s/ stays the deployment path; this
+# file is for development.
+#
+#   server   runs with VTDB_RELOAD=1 and ./packages/server/src bind-mounted
+#            over /app/src (PYTHONPATH shadows the baked copy): edit a tool,
+#            save, uvicorn restarts the worker in ~1s — NO image rebuild.
+#            Rebuild only when uv.lock changes.
+#   alloy    tails this project's containers via the Docker socket, parses the
+#            log lines into level/logger, pushes to Loki
+#   loki     single-binary log store (filesystem, dev volume)
+#   grafana  log UI with provisioned Loki datasource + "vtdb-mcp · Logs" dash.
+#
+# Usage (build secret for the private bioturing index comes from the host env):
+#   export UV_INDEX_BIOTURING_PASSWORD=...        # repo .envrc exports it
+#   docker compose -f compose.dev.yaml up -d --build
+#   docker compose -f compose.dev.yaml logs -f server
+#   docker compose -f compose.dev.yaml down       # add -v to wipe log data
+#
+# UIs:
+#   Grafana:    http://localhost:3000        (admin / admin, anonymous viewer)
+#   Alloy UI:   http://localhost:12345       (loopback only; pipeline graph)
+#   Loki API:   http://localhost:3100        (loopback only)
+#   MCP server: http://localhost:8000/mcp    (+ /health)
+
+services:
+  server:
+    build:
+      context: ./packages/server
+      dockerfile: docker/Dockerfile
+      secrets:
+        - bioturing_token
+    image: vtdb-mcp-server:dev
+    environment:
+      VTDB_HOST: 0.0.0.0
+      # Auto-reload + import the bind-mounted source instead of the baked one.
+      VTDB_RELOAD: "1"
+      PYTHONPATH: /app/src
+      VTDB_DEBUG: ${VTDB_DEBUG:-}
+    volumes:
+      # Live source over a neutral path (NOT the venv — watchfiles ignores
+      # site-packages); PYTHONPATH=/app/src makes it win over the baked wheel.
+      # uvicorn's reloader watches the cwd (/app), which includes this mount.
+      - ./packages/server/src/server:/app/src/server:ro
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read()",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    ports:
+      - "${VTDB_PORT:-8000}:8000"
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:3.5.1
+    command: ["-config.file=/etc/loki/config.yaml"]
+    volumes:
+      - ./docker/loki/config.yaml:/etc/loki/config.yaml:ro
+      - loki-data:/loki
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3100/ready || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    ports:
+      - "127.0.0.1:${LOKI_PORT:-3100}:3100"
+    restart: unless-stopped
+
+  alloy:
+    image: grafana/alloy:v1.10.2
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    volumes:
+      - ./docker/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy-data:/var/lib/alloy/data
+    depends_on:
+      loki:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${ALLOY_PORT:-12345}:12345"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      loki:
+        condition: service_healthy
+      alloy:
+        condition: service_started
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    restart: unless-stopped
+
+# Build secret for the private bioturing PyPI index (biocircle); see
+# packages/server/docker/Dockerfile.
+secrets:
+  bioturing_token:
+    environment: UV_INDEX_BIOTURING_PASSWORD
+
+volumes:
+  loki-data:
+  alloy-data:
+  grafana-data:

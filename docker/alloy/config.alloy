@@ -1,0 +1,108 @@
+// Grafana Alloy pipeline (DEV / docker compose): container logs -> Loki.
+//
+//   discovery.docker       find every container on the mounted socket
+//   discovery.relabel      add friendly labels (container, compose service, stream)
+//   loki.source.docker     tail stdout/stderr of those containers
+//   loki.process           parse the server's log format into level/logger labels
+//   loki.write             push to Loki
+//
+// This is the docker-socket sibling of k8s/alloy/config.alloy — keep the
+// loki.process block below in sync with it. The server's plain log format
+// (packages/server/src/server/log.py) is
+//   2006-01-02 15:04:05,000 LEVEL logger.name: message
+
+logging {
+  level  = "info"
+  format = "logfmt"
+}
+
+// ---- Discover containers ------------------------------------------------- //
+
+discovery.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  // Snappy discovery so new/restarted containers start tailing quickly.
+  refresh_interval = "5s"
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  // This Docker daemon may run unrelated projects — only tail containers
+  // belonging to THIS compose project (compose injects the project label on
+  // every service; project name = directory basename unless -p overrides it,
+  // in which case update this regex).
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    regex         = "vtdb-mcp"
+    action        = "keep"
+  }
+
+  // "/vtdb-mcp-server-1" -> "vtdb-mcp-server-1"
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  // Compose injects com.docker.compose.service=<service> on every container.
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+
+  // stdout vs stderr.
+  rule {
+    source_labels = ["__meta_docker_container_log_stream"]
+    target_label  = "stream"
+  }
+}
+
+// ---- Tail + enrich -------------------------------------------------------- //
+
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.containers.output
+  labels     = { app = "vtdb-mcp" }
+  forward_to = [loki.process.containers.receiver]
+}
+
+loki.process "containers" {
+  // Parse the app's plain log format into fields. Non-matching lines (e.g.
+  // raw multi-line tracebacks) pass through unchanged without a level label.
+  stage.regex {
+    expression = `^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}) (?P<level>DEBUG|INFO|WARNING|ERROR|CRITICAL) (?P<logger>[\w.]+): (?P<msg>.*)\n?$`
+  }
+
+  // Only index the low-cardinality fields as stream labels.
+  stage.labels {
+    values = {
+      level  = "",
+      stream = "",
+    }
+  }
+
+  // Use the app's own timestamp as the Loki entry time (UTC inside the slim
+  // container image).
+  stage.timestamp {
+    source = "ts"
+    format = "2006-01-02 15:04:05,000"
+  }
+
+  // The logger name is higher-cardinality context — structured metadata, not
+  // a label, so it stays queryable without fragmenting streams.
+  stage.structured_metadata {
+    values = {
+      logger = "",
+    }
+  }
+
+  forward_to = [loki.write.local.receiver]
+}
+
+// ---- Push to Loki ---------------------------------------------------------- //
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
