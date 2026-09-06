@@ -3,9 +3,10 @@
 A minimal [FastMCP](https://gofastmcp.com) server (streamable-http at `/mcp`,
 unauthenticated `/health` next to it), modeled on
 `~/exen-mcp/packages/server`. Tools: `query` (runs sandboxed Python via the
-biocircle trace→seal→run spine against a `VtdbSymbolContext` — Phase 0: no
-custom symbols, so `output({'hello': 1 + 2.0})` is the shape of it) and
-`server_info`.
+biocircle trace→seal→run spine against a `VtdbSymbolContext` with the
+filtering DSL registered — `database(view)`, polars-style `col()` filter
+expressions, `db.resolve_ids(...)` / `db.count(...)` against Qdrant; see
+`docs/filtering-dsl-plan.md`) and `server_info`.
 
 ## Run locally
 

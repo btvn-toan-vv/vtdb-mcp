@@ -90,6 +90,8 @@ services:
       VTDB_RELOAD: "1"
       PYTHONPATH: /app/src
       VTDB_DEBUG: ${VTDB_DEBUG:-}
+      # The query DSL's Qdrant target (compose service name, not localhost).
+      QDRANT_HOST: qdrant
     volumes:
       # Live source over a neutral path (NOT the venv — watchfiles ignores
       # site-packages); PYTHONPATH=/app/src makes it win over the baked wheel.

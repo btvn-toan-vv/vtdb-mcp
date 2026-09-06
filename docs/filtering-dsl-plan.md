@@ -1,6 +1,11 @@
 # Filtering DSL — implementation plan
 
-Status: planned (not started)
+Status: **implemented** (2026-09-06). Notes vs. plan: class auto-discovery
+needs explicit `method_filter=None` (default `()` registers nothing); DSL
+"null" maps to Qdrant `IsEmptyCondition` because ingest drops None payload
+keys; the executor's `ExecutionError` gets peeled one level so
+`UnknownFieldError`/`UnknownViewError` surface as first-class error types.
+Everything else is as written below.
 Target: make the three `xfail(strict=True)` tests in
 `packages/server/tests/test_filtering.py` pass against the dev stack.
 

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import atexit
 import logging
+import re
 import threading
 import traceback
 from typing import Any
@@ -112,6 +113,13 @@ def execute_query(
         value = unwrap_result(record.result, store)
     except Exception as exc:  # noqa: BLE001
         logger.info("query execution failed: %s: %s", type(exc).__name__, exc)
-        return _error_result(type(exc).__name__, str(exc), debug)
+        # biocircle wraps inner errors as "InnerType: message (func=...) (line N)"
+        # — peel the inner error type so DSL errors (UnknownFieldError etc.)
+        # surface as first-class error types.
+        err_type, message = type(exc).__name__, str(exc)
+        m = re.match(r"^([A-Za-z_]\w*Error): (.*)$", message, re.DOTALL)
+        if err_type == "ExecutionError" and m:
+            err_type, message = m.group(1), m.group(2)
+        return _error_result(err_type, message, debug)
 
     return {"result": value}

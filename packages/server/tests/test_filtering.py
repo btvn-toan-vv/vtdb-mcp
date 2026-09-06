@@ -1,29 +1,44 @@
-"""Filtering DSL sketches — polars-shaped syntax for the future
-``database() -> db`` vocabulary (``db.resolve_ids(filter_expr)``).
+"""Filtering DSL — end-to-end against the dev stack's Qdrant.
 
-These pin the *surface* we want before the symbols are registered in
-VtdbSymbolContext: filter expressions imitate polars
-(``col("x") == "a"`` / comparison before ``&`` / ``|``, string ops under the
-``.str`` namespace). Strict-xfail until the vocabulary lands; XPASS then fails
-loudly so the marker gets removed.
+Polars-shaped expression syntax over payload fields (``col("x") == "a"``,
+comparisons parenthesized before ``&``/``|``, ``.str`` namespace). Field names
+are the *sanitized* payload keys (`cell line` → ``cell_line``); unknown fields
+fail resolve with the available list.
 
-Precedence reminder (why the parens): Python binds ``&`` and ``|`` TIGHTER
-than ``==``/``>`` — ``a == b & c > d`` parses as ``a == (b & (c > d))``.
-Polars style parenthesizes every comparison for exactly this reason.
+Counts are exact pins from the dataset (see __scratch/data-exam/main.ipynb).
+Skips when the compose Qdrant isn't reachable.
 """
 
-from typing import Callable
+import socket
+from collections.abc import Callable
 
 import pytest
 from fastmcp.client.client import CallToolResult
 
 from .conftest import dedent_code
 
-# Not registered yet (Phase 0 vocabulary is builtins + output only).
-pytestmark = pytest.mark.xfail(
-    strict=True,
-    reason="filtering vocabulary (database, col, resolve_ids) not in the symbol context yet",
+
+def _qdrant_up() -> bool:
+    import os
+
+    try:
+        with socket.create_connection(
+            ("127.0.0.1", int(os.environ.get("QDRANT_PORT", "6333"))), timeout=0.5
+        ):
+            return True
+    except OSError:
+        return False
+
+
+pytestmark = pytest.mark.skipif(
+    not _qdrant_up(), reason="compose stack down (docker compose up -d qdrant)"
 )
+
+EXPECTED_U2OS_IMAGES = 25_160
+EXPECTED_U2OS_POS_X = 18_565
+EXPECTED_IS_IN_POS_X = 20_401
+EXPECTED_CELLS_COMPARTMENT_NULL = 72_487
+EXPECTED_NULL_OR_A1CF = 72_560
 
 
 def _resolve_count(call_tool: Callable[..., CallToolResult], code: str) -> int:
@@ -32,46 +47,94 @@ def _resolve_count(call_tool: Callable[..., CallToolResult], code: str) -> int:
 
 
 def test_equality_filter(call_tool) -> None:
-    # Polars: pl.col("cell line") == "U2OS"  (NOT .equals — that compares
-    # expression metadata, not values; .eq() is the named variant).
     num_ids = _resolve_count(
         call_tool,
         """
         db = database("image")
-        ids = db.resolve_ids(col("cell line") == "U2OS")
+        ids = db.resolve_ids(col("cell_line") == "U2OS")
         output({"num_ids": len(ids)})
         """,
     )
-    assert num_ids > 0
+    assert num_ids == EXPECTED_U2OS_IMAGES
 
 
 def test_combined_numeric_and_string(call_tool) -> None:
-    # Every comparison parenthesized before & — precedence foot-gun documented
-    # in the module docstring.
+    # Every comparison parenthesized before & — precedence note in the module
+    # docstring and in dsl/expressions.py.
     num_ids = _resolve_count(
         call_tool,
         """
         db = database("image")
         ids = db.resolve_ids(
-            (col("cell line") == "U2OS") & (col("umap2d x") > 0)
+            (col("cell_line") == "U2OS") & (col("umap2d_x") > 0)
         )
         output({"num_ids": len(ids)})
         """,
     )
-    assert num_ids > 0
+    assert num_ids == EXPECTED_U2OS_POS_X
 
 
-def test_or_with_string_namespace(call_tool) -> None:
-    # Polars string ops hang off the .str namespace: .str.contains(), not
-    # a top-level .str_contains().
+def test_or_with_is_in(call_tool) -> None:
     num_ids = _resolve_count(
         call_tool,
         """
         db = database("image")
-        u2os_scored = (col("cell line") == "U2OS") & (col("umap2d x") > 0)
-        starts_u_scored = col("cell line").str.contains("U") & (col("umap2d x") > 0)
-        ids = db.resolve_ids(u2os_scored | starts_u_scored)
+        ids = db.resolve_ids(
+            col("cell_line").is_in(["U2OS", "MCF-7"]) & (col("umap2d_x") > 0)
+        )
         output({"num_ids": len(ids)})
         """,
     )
-    assert num_ids > 0
+    assert num_ids == EXPECTED_IS_IN_POS_X
+
+
+def test_null_semantics_on_cells(call_tool) -> None:
+    # Null = payload key absent (ingest drops Nones).
+    num_ids = _resolve_count(
+        call_tool,
+        """
+        db = database("cell")
+        ids = db.resolve_ids(col("compartment").is_null())
+        output({"num_ids": len(ids)})
+        """,
+    )
+    assert num_ids == EXPECTED_CELLS_COMPARTMENT_NULL
+
+
+def test_or_null_and_equality(call_tool) -> None:
+    num_ids = _resolve_count(
+        call_tool,
+        """
+        db = database("cells")
+        ids = db.resolve_ids(
+            col("compartment").is_null() | (col("gene_names") == "A1CF")
+        )
+        output({"num_ids": len(ids)})
+        """,
+    )
+    assert num_ids == EXPECTED_NULL_OR_A1CF
+
+
+def test_count_shortcut(call_tool) -> None:
+    result = call_tool(
+        "query",
+        {"code": 'output({"n": database("cells").count(col("cell_path").is_null())})'},
+    )
+    assert result.data["result"]["n"] == 102_042
+
+
+def test_unknown_field_message(call_tool) -> None:
+    result = call_tool(
+        "query",
+        {"code": 'output(database("images").count(col("cell line") == "U2OS"))'},
+    )
+    error = result.data["error"]
+    assert "UnknownFieldError" in error["type"]
+    assert "cell_line" in error["message"]
+
+
+def test_unknown_view_message(call_tool) -> None:
+    result = call_tool("query", {"code": 'output(database("protein"))'})
+    error = result.data["error"]
+    assert "UnknownViewError" in error["type"]
+    assert "cells" in error["message"] and "images" in error["message"]
