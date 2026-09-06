@@ -46,3 +46,32 @@ def test_server_info(call_tool) -> None:
     assert info["name"] == "vtdb-mcp"
     assert info["version"] == __version__
     assert info["uptime_seconds"] >= 0.0
+
+
+# ---- docs page (fastmcp-docs) ---------------------------------------------
+
+
+def test_docs_ui_and_openapi_routes() -> None:
+    cfg = ServerConfig()
+    with TestClient(create_app(cfg)) as client:
+        docs = client.get("/mcp/docs")
+        assert docs.status_code == 200
+        assert "text/html" in docs.headers["content-type"]
+        assert "query" in docs.text
+
+        api = client.get("/mcp/openapi.json")
+        assert api.status_code == 200
+        assert "/mcp/api/tools/query" in api.json()["paths"]
+
+        tools = client.get("/mcp/api/tools").json()
+        assert tools["total_tools"] == 2
+        assert set(tools["tools"]) == {"query", "server_info"}
+        # the query tool carries the rendered API-doc markdown
+        assert "## Summary" in tools["tools"]["query"]["description"]
+
+
+def test_docs_disabled_removes_routes() -> None:
+    cfg = ServerConfig(enable_docs=False)
+    with TestClient(create_app(cfg)) as client:
+        assert client.get("/mcp/docs").status_code == 404
+        assert client.get("/health").status_code == 200  # unaffected

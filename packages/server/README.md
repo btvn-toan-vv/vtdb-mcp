@@ -50,7 +50,9 @@ docker compose down                        # add -v to wipe ALL data incl. Qdran
 ```
 
 UIs: Grafana http://localhost:3000 ("vtdb-mcp · Logs", admin/admin) · MCP
-http://localhost:8000/mcp · Qdrant http://localhost:6333/dashboard.
+http://localhost:8000/mcp · tool docs http://localhost:8000/mcp/docs
+(swagger-style, fastmcp-docs; off with VTDB_DOCS=0) · Qdrant
+http://localhost:6333/dashboard.
 
 ### Qdrant bootstrap (`server.ingest`)
 
