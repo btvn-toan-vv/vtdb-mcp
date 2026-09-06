@@ -1,37 +1,107 @@
 ## Summary
 
-Run Python `code` against the vector database collections (`{{ collections | join('`, `') }}`).
+Run Python `code` against the vector database — two Qdrant collections holding
+embeddings + metadata for the subcellular dataset (`cells`: cell crops,
+`images`: source HPA images).
 
-## Details
+## Execution model
 
-The code is **traced and sandboxed** (biocircle scaffold), not eval'd: imports and
-class definitions are not allowed — safe builtins and registered functions are
-pre-loaded in the query namespace.
+The code is **traced and sandboxed** (biocircle), not eval'd:
 
-**Vocabulary**: safe builtins + `output()`, plus the filtering DSL:
+- no `import`, no class definitions; safe builtins + registered functions only;
+- no truthy tests (`if x:` / ternaries) or iterations over *computed* values
+  (plan results with the DSL calls below, then `output(...)`);
+- numbers/strings/lists/dicts/None flow freely; results serialize to JSON
+  (NaN/Infinity → null on the wire).
 
-- `database("cells" | "images")` → a view handle.
-- Polars-style filters: `col("cell_line") == "U2OS"`, comparisons
-  parenthesized before `&` / `|`; `.is_in([...])`, `.is_null() / .is_not_null()`,
-  `col("x").str.contains("…")`.
-- `db.resolve_ids(expr)` → point ids; `db.count(expr)` → int;
-  `db.meta(ids_or_filter, columns=[...])` → payload rows (dicts, `id` attached);
-  `db.search(like=<id | [ids] | filter>, among=<filter|None>, k=10)` → top-k
-  rows by cosine to the anchor(s)' (centroid) vector
-  (`{"id", "score", ...payload}`; `among=None` = the whole view; an anchor that
-  matches the filter leads with score 1.0).
+**Return results with `output(value)` — exactly once** per query. Errors come
+back as `{'error': {'type', 'message', ...}}` (with `lineno` when attributable);
+name typos raise NameError listing the *available* symbols. `debug=True`
+attaches the traceback.
 
-Unknown-name errors list the available vocabulary — the same list grows as
-more functions get registered on the server.
+## Collections & schemas
 
-**Returning results**: call `output(value)` **exactly once** with the result —
-usually a small dict, e.g. `output({'hello': 1 + 2.0})`. The payload is
-serialized to JSON; NaN/Infinity become null on the wire.
+Payload keys are **sanitized column names** (spaces/dots → `_`, lowercase —
+e.g. `cell line` → `cell_line`). `id` (point id) = row index of the view's
+metadata table. **cells and images are different vector spaces — never compare
+across.** Filterable/indexed fields are marked ⚡.
 
-**Errors** come back as `{'error': {'type', 'message', ...}}`, with a `lineno`
-when the sandbox can attribute one. Pass `debug=True` to also receive the
-traceback (server-side frames marked `<user>`).
+{% for v in views %}
+### `{{ v.name }}` — {{ v.dims }}-d vectors, {{ v.desc }}
+{% if v.note %}_{{ v.note }}_{% endif %}
+
+| field | kind | indexed |
+| --- | --- | --- |
+{% for f in v.fields %}| `{{ f.name }}` | {{ f.kind }} | {{ "⚡" if f.indexed else "" }} |
+{% endfor %}
+{% endfor %}
+
+## The DSL
+
+### Pick a view, then read it
 
 ```python
-{{ example }}
+db = database("cells")        # or "images" (aliases "cell" / "image" ok)
+
+db.count(f)                   # int — points matching the filter
+db.resolve_ids(f)             # list[int] — point ids (cap 100k, raises)
+db.meta(ids_or_f)             # list[dict] — payload rows, "id" attached
+db.meta(f, columns=["cell_line", "gene_names"])   # projected rows
+db.search(like=ID, among=f, k=10)                 # top-k by cosine
+# rows: {"id", "score", ...payload}; add with_vector=True for the embedding
+```
+
+### Filters (polars-style expression trees)
+
+`col("field")` + a comparison. **Parenthesize every comparison before
+`&` / `|` / `~`** — Python binds those TIGHTER than `==` (wrong:
+`a == "x" & b > 0`, right: `(a == "x") & (b > 0)`). `and`/`or`/`not` are
+FORBIDDEN inside filters (use `&`/`|`/`~`).
+
+| op | meaning |
+| --- | --- |
+| `col("f") == x` / `!= x` | equality (==None ↔ is_empty) |
+| `>`, `>=`, `<`, `<=` | ranges on numeric fields (⚡ or not) |
+| `col("f").is_in([a, b])` | membership |
+| `col("f").is_null()` / `.is_not_null()` | key absent / present |
+| `col("f").str.contains("Nuc")` | substring (full-text index match) |
+
+### Anchors for search (`like=`)
+
+- `like=12345` — vector of point id 12345 (same view);
+- `like=[3, 15]` — centroid of several anchors;
+- `like=col("cell_line") == "U2OS"` — centroid of a filtered anchor set.
+
+The anchor matching `among` leads with `score == 1.0` (its vector is
+fetched and passed explicitly — anchors are never silently dropped).
+`among=None` = the whole view.
+
+## Examples
+
+```python
+# 1. Count cells of a gene within a compartment:
+db = database("cell")
+output({"n": db.count((col("gene_names") == "A1CF") & (col("compartment") == "Nucleoplasm"))})
+```
+
+```python
+# 2. Fetch metadata of the top U2OS images by 2-D position:
+db = database("images")
+f = (col("cell_line") == "U2OS") & (col("umap2d_x") > 0)
+rows = db.meta(f, columns=["file_prefix", "cell_line", "umap2d_x"])
+output({"rows": rows})
+```
+
+```python
+# 3. Top-5 cells similar to point 12345 within HeLa:
+db = database("cells")
+rows = db.search(like=12345, among=col("cell_line") == "HeLa", k=5)
+output({"rows": rows})
+```
+
+```python
+# 4. Whole-view top-10 nearest to a protein's centroid (images):
+db = database("images")
+rows = db.search(like=col("protein") == "EGFR", among=None, k=10)
+output({"rows": rows})
 ```
