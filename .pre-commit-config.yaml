@@ -14,7 +14,7 @@ repos:
     hooks:
     -   id: pyright-server
         name: pyright (packages/server)
-        entry: uv run --project packages/server --no-sync pyright packages/server/src
+        entry: uv run --project packages/server --no-sync pyright packages/server/src packages/server/tests
         language: system
         types: [python]
         pass_filenames: false

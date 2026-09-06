@@ -93,9 +93,7 @@ def test_null_semantics_empty_not_null() -> None:
 
 
 def test_eq_none_becomes_is_null() -> None:
-    # `== None` IS the DSL op here — overloaded __eq__ builds an is-null
-    # FilterExpr; this is not a boolean comparison, so the noqa is deliberate.
-    f = _translate(col("compartment") == None)  # noqa: E711
+    f = _translate(col("compartment") == None)  # noqa: E711  (overloaded DSL op, not a comparison)
     assert _cond_keys(f) == [("IsEmpty", "compartment")]
 
 
