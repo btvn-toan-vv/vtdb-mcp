@@ -1,0 +1,25 @@
+## Summary
+
+Run Python `code` against the vector database collections (`{{ collections | join('`, `') }}`).
+
+## Details
+
+The code is **traced and sandboxed** (biocircle scaffold), not eval'd: imports and
+class definitions are not allowed — safe builtins and registered functions are
+pre-loaded in the query namespace.
+
+**Vocabulary (Phase 0)**: safe builtins + `output()`. Unknown-name errors list
+the available vocabulary — the same list grows as database-backed functions get
+registered on the server.
+
+**Returning results**: call `output(value)` **exactly once** with the result —
+usually a small dict, e.g. `output({'hello': 1 + 2.0})`. The payload is
+serialized to JSON; NaN/Infinity become null on the wire.
+
+**Errors** come back as `{'error': {'type', 'message', ...}}`, with a `lineno`
+when the sandbox can attribute one. Pass `debug=True` to also receive the
+traceback (server-side frames marked `<user>`).
+
+```python
+{{ example }}
+```

@@ -14,6 +14,7 @@ from typing import Any
 from fastmcp import FastMCP
 
 from server import __version__
+from server.api.descriptions import render_query_description
 from server.core.context import VtdbSymbolContext
 from server.services import pipeline as pipeline_svc
 
@@ -35,18 +36,9 @@ def register_tools(mcp: FastMCP, sym_ctx: VtdbSymbolContext | None = None) -> No
     @mcp.tool(
         name="query",
         tags={"data"},
-        description=(
-            "## Summary\n\nRun Python ``code`` against the vector database.\n\n"
-            "## Details\n\n"
-            "Sandboxed DSL (biocircle-traced): imports and class definitions "
-            "are not allowed; safe builtins + registered functions are "
-            "pre-loaded (Phase 0: builtins only). Report results with "
-            "`output(value)` — exactly once per query. Example: "
-            "`output({'hello': 1 + 2.0})`\n\n"
-            "Result: {'result': <payload>}. Failures: {'error': {'type', "
-            "'message', ...}} with a line number when known; full traceback "
-            "only with debug=True."
-        ),
+        # Jinja template: api/templates/query.md.j2 (see descriptions.py) —
+        # the exen-mcp pattern; edit the markdown, not the Python.
+        description=render_query_description(),
     )
     async def query(code: str, debug: bool = False) -> dict[str, Any]:
         # Worker thread like exen's pipeline_query (asyncio.to_thread): a slow
