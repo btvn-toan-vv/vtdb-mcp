@@ -2,7 +2,7 @@
 
 Polars-shaped expressions over payload fields, executed through the real MCP
 tool against a throwaway Qdrant container loaded with a deterministic
-synthetic dataset (fixtures in conftest.qdrant_test_stack). No dependence on
+synthetic dataset (fixtures in conftest.hermetic_env). No dependence on
 the ~/data/subcellular_embeddings snapshot — expected counts are COMPUTED from
 the fixture, not pinned. Needs Docker; skips cleanly without it.
 
@@ -23,7 +23,7 @@ def _resolve_count(call_tool: Callable[..., CallToolResult], code: str) -> int:
     return result.data["result"]["num_ids"]
 
 
-def test_equality_filter(call_tool, qdrant_test_stack) -> None:
+def test_equality_filter(call_tool, hermetic_env) -> None:
     num_ids = _resolve_count(
         call_tool,
         """
@@ -32,10 +32,10 @@ def test_equality_filter(call_tool, qdrant_test_stack) -> None:
         output({"num_ids": len(ids)})
         """,
     )
-    assert num_ids == qdrant_test_stack["images"]["u2os"]
+    assert num_ids == hermetic_env["images"]["u2os"]
 
 
-def test_combined_numeric_and_string(call_tool, qdrant_test_stack) -> None:
+def test_combined_numeric_and_string(call_tool, hermetic_env) -> None:
     num_ids = _resolve_count(
         call_tool,
         """
@@ -46,10 +46,10 @@ def test_combined_numeric_and_string(call_tool, qdrant_test_stack) -> None:
         output({"num_ids": len(ids)})
         """,
     )
-    assert num_ids == qdrant_test_stack["images"]["u2os_pos_x"]
+    assert num_ids == hermetic_env["images"]["u2os_pos_x"]
 
 
-def test_or_with_is_in(call_tool, qdrant_test_stack) -> None:
+def test_or_with_is_in(call_tool, hermetic_env) -> None:
     num_ids = _resolve_count(
         call_tool,
         """
@@ -60,10 +60,10 @@ def test_or_with_is_in(call_tool, qdrant_test_stack) -> None:
         output({"num_ids": len(ids)})
         """,
     )
-    assert num_ids == qdrant_test_stack["images"]["is_in_pos_x"]
+    assert num_ids == hermetic_env["images"]["is_in_pos_x"]
 
 
-def test_null_semantics_on_cells(call_tool, qdrant_test_stack) -> None:
+def test_null_semantics_on_cells(call_tool, hermetic_env) -> None:
     num_ids = _resolve_count(
         call_tool,
         """
@@ -72,10 +72,10 @@ def test_null_semantics_on_cells(call_tool, qdrant_test_stack) -> None:
         output({"num_ids": len(ids)})
         """,
     )
-    assert num_ids == qdrant_test_stack["cells"]["compartment_null"]
+    assert num_ids == hermetic_env["cells"]["compartment_null"]
 
 
-def test_or_null_and_equality(call_tool, qdrant_test_stack) -> None:
+def test_or_null_and_equality(call_tool, hermetic_env) -> None:
     num_ids = _resolve_count(
         call_tool,
         """
@@ -86,18 +86,18 @@ def test_or_null_and_equality(call_tool, qdrant_test_stack) -> None:
         output({"num_ids": len(ids)})
         """,
     )
-    assert num_ids == qdrant_test_stack["cells"]["null_or_g07"]
+    assert num_ids == hermetic_env["cells"]["null_or_g07"]
 
 
-def test_count_shortcut(call_tool, qdrant_test_stack) -> None:
+def test_count_shortcut(call_tool, hermetic_env) -> None:
     result = call_tool(
         "query",
         {"code": 'output({"n": database("cells").count(col("cell_path").is_null())})'},
     )
-    assert result.data["result"]["n"] == qdrant_test_stack["cells"]["path_null"]
+    assert result.data["result"]["n"] == hermetic_env["cells"]["path_null"]
 
 
-def test_unknown_field_message(call_tool, qdrant_test_stack) -> None:
+def test_unknown_field_message(call_tool, hermetic_env) -> None:
     result = call_tool(
         "query",
         {"code": 'output(database("images").count(col("cell line") == "U2OS"))'},
@@ -108,7 +108,7 @@ def test_unknown_field_message(call_tool, qdrant_test_stack) -> None:
     assert "cell_line" in error["message"]
 
 
-def test_unknown_view_message(call_tool, qdrant_test_stack) -> None:
+def test_unknown_view_message(call_tool, hermetic_env) -> None:
     result = call_tool("query", {"code": 'output(database("protein"))'})
     error = result.data["error"]
     assert "UnknownViewError" in error["type"]

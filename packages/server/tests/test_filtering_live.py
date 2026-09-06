@@ -25,16 +25,33 @@ def _qdrant_up() -> bool:
 
 pytestmark = pytest.mark.live
 
+_PROD_ENV = {}  # defaults: localhost:6333/6334 (compose-published dev stack)
+
 
 @pytest.fixture(autouse=True)
-def _require_live_stack() -> None:
-    # Fail loudly when explicitly asked to run live but the stack is down —
-    # better than a quiet skip for an opt-in tier.
+def _point_at_dev_stack():
+    """Tier isolation: the tier-1 session fixture repaints QDRANT_* env (and
+    caches the client singleton) at the synthetic test container; when both
+    tiers run in ONE process (`-m ""`), that paint would leak here. Repaint to
+    the dev stack's loopback ports + drop the cached client before each test.
+    """
+    import os
+
+    for k in ("QDRANT_HOST", "QDRANT_PORT", "QDRANT_GRPC_PORT"):
+        os.environ.pop(k, None)  # fall back to defaults (localhost:6333/6334)
+    from server.services.qdrant import reset_client
+
+    reset_client()
+
+    # Fail loudly when explicitly live but the stack is down — better than a
+    # quiet skip for an opt-in tier.
     if not _qdrant_up():
         pytest.fail(
             "live tests require the dev stack: docker compose up -d && "
             "docker compose up ingest"
         )
+    yield
+    reset_client()
 
 
 def _resolve_count(call_tool: Callable[..., CallToolResult], code: str) -> int:

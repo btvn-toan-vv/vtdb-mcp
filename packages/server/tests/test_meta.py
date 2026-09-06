@@ -17,14 +17,9 @@ All assertions use conftest.PayloadOracle (the fixture's own rows), so the
 suite stays valid if the fixture generator changes.
 """
 
-import pytest
 from fastmcp.client.client import CallToolResult
 
 from .conftest import dedent_code
-
-pytestmark = pytest.mark.xfail(
-    strict=True, reason="ViewHandle.meta is not implemented yet — review draft"
-)
 
 
 def _meta(call_tool, code: str):
@@ -32,41 +27,41 @@ def _meta(call_tool, code: str):
     return result.data["result"]["rows"]
 
 
-def test_meta_by_explicit_ids_keeps_order(call_tool, qdrant_test_stack) -> None:
+def test_meta_by_explicit_ids_keeps_order(call_tool, hermetic_env) -> None:
     rows = _meta(
         call_tool,
         'output({"rows": database("cells").meta([3, 0, 7])})',
     )
     assert [r["id"] for r in rows] == [3, 0, 7]
-    oracle = qdrant_test_stack["payload_of"]
+    oracle = hermetic_env["payload_of"]
     for r in rows:
         expected = oracle("cells", r["id"])
         expected["id"] = r["id"]
         assert r == expected  # full payload, exact
 
 
-def test_meta_by_single_int(call_tool, qdrant_test_stack) -> None:
+def test_meta_by_single_int(call_tool, hermetic_env) -> None:
     rows = _meta(call_tool, 'output({"rows": database("images").meta(5)})')
     assert len(rows) == 1
-    oracle = qdrant_test_stack["payload_of"]
+    oracle = hermetic_env["payload_of"]
     assert rows[0] == {**oracle("images", 5), "id": 5}
 
 
-def test_meta_by_filter(call_tool, qdrant_test_stack) -> None:
+def test_meta_by_filter(call_tool, hermetic_env) -> None:
     # Every row 0..239 has cell_path=None on i%5==0 → first hits in scroll order.
     rows = _meta(
         call_tool,
         'output({"rows": database("cells").meta(col("cell_path").is_null())})',
     )
-    n_null = qdrant_test_stack["cells"]["path_null"]
-    assert len(rows) == qdrant_test_stack["cells"]["path_null"] <= 10_000
-    oracle = qdrant_test_stack["payload_of"]
+    n_null = hermetic_env["cells"]["path_null"]
+    assert len(rows) == hermetic_env["cells"]["path_null"] <= 10_000
+    oracle = hermetic_env["payload_of"]
     for r in rows:
         assert r == {**oracle("cells", r["id"]), "id": r["id"]}
     assert n_null > 0  # guard against a vacuous fixture
 
 
-def test_meta_filter_roundtrip_with_resolve_ids(call_tool, qdrant_test_stack) -> None:
+def test_meta_filter_roundtrip_with_resolve_ids(call_tool, hermetic_env) -> None:
     rows = _meta(
         call_tool,
         """
@@ -75,14 +70,14 @@ def test_meta_filter_roundtrip_with_resolve_ids(call_tool, qdrant_test_stack) ->
         output({"rows": db.meta(ids)})
         """,
     )
-    oracle = qdrant_test_stack["payload_of"]
-    assert len(rows) == qdrant_test_stack["images"]["u2os_pos_x"]
+    oracle = hermetic_env["payload_of"]
+    assert len(rows) == hermetic_env["images"]["u2os_pos_x"]
     assert all(r["umap2d_x"] > 0 for r in rows)
     for r in rows:
         assert r == {**oracle("images", r["id"]), "id": r["id"]}
 
 
-def test_meta_column_projection(call_tool, qdrant_test_stack) -> None:
+def test_meta_column_projection(call_tool, hermetic_env) -> None:
     rows = _meta(
         call_tool,
         'output({"rows": database("cells").meta([0, 1], columns=["cell_line", "gene_names"])})',
@@ -91,7 +86,23 @@ def test_meta_column_projection(call_tool, qdrant_test_stack) -> None:
     assert [r["cell_line"] for r in rows] == ["U2OS", "HeLa"]  # fixture rotation
 
 
-def test_meta_unknown_column(call_tool, qdrant_test_stack) -> None:
+def test_meta_projection_on_filter(call_tool, hermetic_env) -> None:
+    # The combo that wasn't in the id-form: filter path must project identically.
+    rows = _meta(
+        call_tool,
+        """
+        output({"rows": database("cells").meta(
+            (col("cell_line") == "U2OS") & (col("cell_id") < 2),
+            columns=["cell_line", "gene_names"],
+        )})
+        """,
+    )
+    assert [r["id"] for r in rows] == [0]  # row 0: U2OS (0%3) and cell_id 0<2
+    assert set(rows[0]) == {"id", "cell_line", "gene_names"}
+    assert rows[0]["gene_names"] == "G00"
+
+
+def test_meta_unknown_column(call_tool, hermetic_env) -> None:
     result = call_tool(
         "query",
         {"code": 'output({"rows": database("cells").meta([0], columns=["foo"])})'},
@@ -101,7 +112,7 @@ def test_meta_unknown_column(call_tool, qdrant_test_stack) -> None:
     assert "cell_line" in error["message"]  # available list offered
 
 
-def test_meta_limit_guard(call_tool, qdrant_test_stack) -> None:
+def test_meta_limit_guard(call_tool, hermetic_env) -> None:
     # Fixture has 240 cells; cap 5 should trip loudly, not truncate silently.
     result = call_tool(
         "query",
@@ -110,7 +121,7 @@ def test_meta_limit_guard(call_tool, qdrant_test_stack) -> None:
     assert "limit" in result.data["error"]["message"]
 
 
-def test_meta_missing_ids_are_dropped(call_tool, qdrant_test_stack) -> None:
+def test_meta_missing_ids_are_dropped(call_tool, hermetic_env) -> None:
     # 999_999 does not exist; qdrant retrieve omits missing points.
     rows = _meta(
         call_tool,
@@ -119,14 +130,14 @@ def test_meta_missing_ids_are_dropped(call_tool, qdrant_test_stack) -> None:
     assert [r["id"] for r in rows] == [0]
 
 
-def test_meta_bad_type(call_tool, qdrant_test_stack) -> None:
+def test_meta_bad_type(call_tool, hermetic_env) -> None:
     result = call_tool(
         "query", {"code": 'output({"rows": database("cells").meta("U2OS")})'}
     )
     assert result.data["error"]["type"] == "DSLUsageError"
 
 
-def test_meta_no_args_is_guided(call_tool, qdrant_test_stack) -> None:
+def test_meta_no_args_is_guided(call_tool, hermetic_env) -> None:
     result = call_tool("query", {"code": 'output({"rows": database("cells").meta()})'})
     # no-arg is too risky to full-scan by default — guide the user instead.
     assert result.data["error"]["type"] in {"DSLUsageError", "TypeError"}

@@ -405,6 +405,25 @@ def qdrant_test_stack(tmp_path_factory):
         )
 
 
+@pytest.fixture
+def hermetic_env(qdrant_test_stack):
+    """Tier-1 per-test entry: repaint test-Qdrant env + drop the cached client.
+
+    The session fixture sets the env once at spin-up, but a combined
+    `-m ""` run may interleave modules that repaint (the live tier pops
+    QDRANT_* to default to the dev stack). Repaint per test so tier 1 is
+    immune to module cross-talk in any order. Yields the same expected-facts
+    dict as the session fixture.
+    """
+    import os
+
+    from server.services.qdrant import reset_client
+
+    os.environ.update(_TEST_ENV)
+    reset_client()
+    yield qdrant_test_stack
+
+
 def as_client(fake: FakeQdrant) -> QdrantClient:
     """Type-boundary cast: the fake is a structural stand-in for QdrantClient.
 

@@ -5,8 +5,9 @@ unauthenticated `/health` next to it), modeled on
 `~/exen-mcp/packages/server`. Tools: `query` (runs sandboxed Python via the
 biocircle trace→seal→run spine against a `VtdbSymbolContext` with the
 filtering DSL registered — `database(view)`, polars-style `col()` filter
-expressions, `db.resolve_ids(...)` / `db.count(...)` against Qdrant; see
-`docs/filtering-dsl-plan.md`) and `server_info`.
+expressions, `db.resolve_ids(...)`, `db.count(...)`, `db.meta(ids_or_filter,
+columns=...)` against Qdrant; see `docs/filtering-dsl-plan.md` and
+`docs/meta-feature-plan.md`) and `server_info`.
 
 ## Run locally
 

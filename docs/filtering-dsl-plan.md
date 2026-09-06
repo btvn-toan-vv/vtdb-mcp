@@ -18,6 +18,11 @@ Everything else is as written below.
   pins against the full real dataset in the dev stack; fails loudly if run
   while the stack is down.
 - The old silent-skip socket probe is gone from both tiers.
+
+### Follow-ups landed
+
+- 2026-09-06: `ViewHandle.meta` — payload fetch by ids / filter / projection
+  (plan: `docs/meta-feature-plan.md`; contract: `tests/test_meta.py`).
 Target: make the three `xfail(strict=True)` tests in
 `packages/server/tests/test_filtering.py` pass against the dev stack.
 

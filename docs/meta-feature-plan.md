@@ -1,7 +1,9 @@
 # `ViewHandle.meta` — implementation plan
 
-Status: planned (tests pinned: `packages/server/tests/test_meta.py`, 10 strict-xfail
-review tests, committed as caa9158).
+Status: **implemented** (2026-09-06) — `ViewHandle.meta` in `dsl/views.py`;
+all pinned tests pass live (`tests/test_meta.py` flipped from xfail, plus a
+`projection-on-filter` regression added after live smoke caught the combo).
+Notes vs plan: none beyond the pinned matrix.
 
 ## Goal
 
