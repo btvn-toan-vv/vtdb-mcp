@@ -16,19 +16,39 @@ uv run server                # or: uv run python -m server
 Config via flags or env: `--host/--port/--mcp-path/--debug/--reload`
 (`VTDB_HOST`, `VTDB_PORT`, `VTDB_MCP_PATH`, `VTDB_DEBUG`, `VTDB_RELOAD`).
 
-## Develop (dev compose stack)
+## Full stack (develop + deploy)
 
-`../../compose.dev.yaml` runs the server + Grafana Alloy/Loki/Grafana on
-plain Docker with the source bind-mounted and `VTDB_RELOAD=1` — edit a tool,
-save, uvicorn restarts the worker in ~1s (no image rebuild; rebuild only when
-`uv.lock` changes):
+`../../compose.yaml` runs the server + Qdrant + Grafana Alloy/Loki/Grafana on
+plain Docker — the only orchestration path (no k8s anymore). For development
+the source is bind-mounted and `VTDB_RELOAD=1` auto-reloads the worker on edit
+(~1s, no image rebuild; rebuild only when `uv.lock` changes):
 
 ```bash
-docker compose -f compose.dev.yaml up -d --build
-docker compose -f compose.dev.yaml down       # add -v to wipe dev log data
+docker compose up -d --build
+docker compose down                        # add -v to wipe ALL data incl. Qdrant
 ```
 
-## Docker
+UIs: Grafana http://localhost:3000 ("vtdb-mcp · Logs", admin/admin) · MCP
+http://localhost:8000/mcp · Qdrant http://localhost:6333/dashboard.
+
+### Qdrant bootstrap (`server.ingest`)
+
+The one-shot `ingest` service loads the subcellular-embeddings dataset
+(`VTDB_DATA_DIR`, default `~/data/subcellular_embeddings`) into two cosine
+collections — `cells` (1536-d) and `images` (1024-d) — with payload indexes on
+the filterable metadata columns. It is idempotent: re-runs skip views whose
+point count already matches the dataset, resume partial loads from the exact
+row offset, and only recreate collections on `--force` or schema drift
+(dims/distance changed). The `server` service waits for it (`--no-deps` skips
+that while a full load runs). Set `VTDB_QDRANT_DATA` to bind-mount Qdrant's
+storage somewhere roomy (the full cells view is ~9 GiB).
+
+```bash
+docker compose up ingest                   # full / check-only run
+VTDB_INGEST_LIMIT=20000 docker compose up ingest   # smoke load
+docker compose run --rm ingest --force             # rebuild collections
+uv run python -m server.ingest --limit 20000       # local CLI (host ports)
+```
 
 ## Docker
 
@@ -39,16 +59,4 @@ export UV_INDEX_BIOTURING_PASSWORD=...   # in repo .envrc
 docker build \
   --secret id=bioturing_token,env=UV_INDEX_BIOTURING_PASSWORD \
   -f docker/Dockerfile -t vtdb-mcp-server:dev .
-```
-
-## Deploy (server + Grafana Alloy/Loki/Grafana)
-
-Deployment path is Kubernetes — see the header comments in
-`../../k8s/kustomization.yaml`:
-
-```bash
-kind load docker-image vtdb-mcp-server:dev   # after the docker build above
-kubectl apply -k k8s/
-kubectl -n vtdb-mcp port-forward svc/grafana 3000:3000   # admin / admin
-# -> dashboard “vtdb-mcp · Logs”
 ```

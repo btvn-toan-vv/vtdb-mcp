@@ -1,7 +1,6 @@
 # Loki 3.5 — single-binary (monolithic) mode, filesystem storage on the
 # loki-data volume mounted at /loki. Single instance: replication_factor 1 with
-# an in-memory ring. Dev stack data is wiped by `docker compose -f
-# compose.dev.yaml down -v`.
+# an in-memory ring. Data is wiped by `docker compose down -v`.
 
 auth_enabled: false
 

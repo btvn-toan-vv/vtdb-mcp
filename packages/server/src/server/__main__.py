@@ -14,7 +14,7 @@ unauthenticated operational endpoint for probes.
 
 ``--reload`` (VTDB_RELOAD) enables uvicorn's auto-reload. Reload mode is
 env-driven (the respawned child re-reads VTDB_*; CLI flags are dropped), so
-prefer env vars when using it — see compose.dev.yaml.
+prefer env vars when using it — see compose.yaml.
 """
 
 import argparse

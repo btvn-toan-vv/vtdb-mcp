@@ -1,0 +1,178 @@
+# vtdb-mcp stack — the MCP server + Qdrant + log pipeline, on plain Docker.
+# This is both the dev inner loop and the deployment path (compose only; no
+# other orchestrator).
+#
+#   qdrant   vector DB (cells/images collections)          :6333/:6334 loopback
+#   ingest   one-shot dataset bootstrap (idempotent; see packages/server's
+#            server/ingest.py), server waits on it
+#   server   FastMCP /mcp + /health; VTDB_RELOAD=1 + bind-mounted source for
+#            hot reload in dev (edit a tool, save, worker restarts in ~1s —
+#            no image rebuild; rebuild only when uv.lock changes)
+#   alloy    tails this project's containers via the Docker socket, parses the
+#            log lines into level/logger, pushes to Loki
+#   loki     single-binary log store                        :3100 loopback
+#   grafana  log UI, provisioned Loki datasource + "vtdb-mcp · Logs" dashboard
+#                                                              :3000 admin/admin
+#
+# Usage (build secret for the private bioturing index comes from the host env):
+#   export UV_INDEX_BIOTURING_PASSWORD=...   # repo .envrc exports it
+#   docker compose up -d --build
+#   docker compose logs -f server
+#   docker compose down                      # add -v to wipe ALL data
+#
+# Deploy on a host: same `up -d --build` (unset VTDB_RELOAD / drop the source
+# mount if you want the strictly-baked image behavior; both are harmless when
+# left as-is).
+
+services:
+  # Vector DB for the dev stack. No image healthcheck: the qdrant image ships
+  # only sh (no curl/wget/dash-TCP) to probe with — the ingest service instead
+  # retries its connection (see packages/server/src/server/ingest.py).
+  qdrant:
+    # Pinned to match qdrant-client 1.19.x in packages/server (the client
+    # warns when minor versions drift by more than one).
+    image: qdrant/qdrant:v1.19.0
+    ports:
+      # Loopback only: local `uv run python -m server.ingest` / the Qdrant
+      # dashboard (http://localhost:6333/dashboard) reach it; the cluster
+      # network is the real path.
+      - "127.0.0.1:${QDRANT_PORT:-6333}:6333"
+      - "127.0.0.1:${QDRANT_GRPC_PORT:-6334}:6334"
+    volumes:
+      # Vectors+indexes for the full dataset are ~9 GiB — point
+      # VTDB_QDRANT_DATA at a roomy host path if the docker volume's disk is
+      # tight (exen's EXEN_STORAGE pattern).
+      - ${VTDB_QDRANT_DATA:-qdrant-data}:/qdrant/storage
+    restart: unless-stopped
+
+  # One-shot dataset bootstrap (exen-mcp db-init pattern): loads
+  # cell/image embeddings + metadata into Qdrant with payload indexes, then
+  # exits. Idempotent — re-running only checks counts and skips (see
+  # server/ingest.py docstring), so gating the server on it is cheap after the
+  # first run.
+  ingest:
+    image: vtdb-mcp-server:dev
+    build:
+      context: ./packages/server
+      dockerfile: docker/Dockerfile
+      secrets:
+        - bioturing_token
+    entrypoint: ["/usr/bin/tini", "--", "python", "-m", "server.ingest"]
+    environment:
+      QDRANT_HOST: qdrant
+      VTDB_DATA_DIR: /data/dataset
+      # Host-side knobs: VTDB_INGEST_LIMIT=20000 for a smoke load;
+      # rebuild: docker compose run --rm ingest --force
+      VTDB_INGEST_LIMIT: ${VTDB_INGEST_LIMIT:-0}
+    volumes:
+      # The subcellular-embeddings dataset, read-only.
+      - ${VTDB_DATA_DIR:-/home/toanvong/data/subcellular_embeddings}:/data/dataset:ro
+    depends_on:
+      qdrant:
+        condition: service_started
+    restart: "no"
+
+  server:
+    depends_on:
+      # Server starts once the (idempotent) bootstrap finished. Use
+      # `--no-deps` to iterate on the server alone during a big first load.
+      ingest:
+        condition: service_completed_successfully
+    build:
+      context: ./packages/server
+      dockerfile: docker/Dockerfile
+      secrets:
+        - bioturing_token
+    image: vtdb-mcp-server:dev
+    environment:
+      VTDB_HOST: 0.0.0.0
+      # Auto-reload + import the bind-mounted source instead of the baked one.
+      VTDB_RELOAD: "1"
+      PYTHONPATH: /app/src
+      VTDB_DEBUG: ${VTDB_DEBUG:-}
+    volumes:
+      # Live source over a neutral path (NOT the venv — watchfiles ignores
+      # site-packages); PYTHONPATH=/app/src makes it win over the baked wheel.
+      # uvicorn's reloader watches the cwd (/app), which includes this mount.
+      - ./packages/server/src/server:/app/src/server:ro
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read()",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    ports:
+      - "${VTDB_PORT:-8000}:8000"
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:3.5.1
+    command: ["-config.file=/etc/loki/config.yaml"]
+    volumes:
+      - ./docker/loki/config.yaml:/etc/loki/config.yaml:ro
+      - loki-data:/loki
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3100/ready || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    ports:
+      - "127.0.0.1:${LOKI_PORT:-3100}:3100"
+    restart: unless-stopped
+
+  alloy:
+    image: grafana/alloy:v1.10.2
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    volumes:
+      - ./docker/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy-data:/var/lib/alloy/data
+    depends_on:
+      loki:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${ALLOY_PORT:-12345}:12345"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      loki:
+        condition: service_healthy
+      alloy:
+        condition: service_started
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    restart: unless-stopped
+
+# Build secret for the private bioturing PyPI index (biocircle); see
+# packages/server/docker/Dockerfile.
+secrets:
+  bioturing_token:
+    environment: UV_INDEX_BIOTURING_PASSWORD
+
+volumes:
+  loki-data:
+  alloy-data:
+  grafana-data:
+  qdrant-data:

@@ -6,10 +6,9 @@
 //   loki.process           parse the server's log format into level/logger labels
 //   loki.write             push to Loki
 //
-// This is the docker-socket sibling of k8s/alloy/config.alloy — keep the
-// loki.process block below in sync with it. The server's plain log format
-// (packages/server/src/server/log.py) is
+// The server's plain log format (packages/server/src/server/log.py) is
 //   2006-01-02 15:04:05,000 LEVEL logger.name: message
+// If you change that format, update the stage.regex below to match.
 
 logging {
   level  = "info"

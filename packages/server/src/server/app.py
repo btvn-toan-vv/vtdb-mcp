@@ -1,8 +1,8 @@
 """ASGI app assembly — exen-mcp's app.py stripped to the core.
 
 One FastMCP server over streamable-http at ``/mcp``, plus an unauthenticated
-operational ``/health`` route (load balancers + the probes in compose.dev.yaml
-and the k8s manifests), served by a single uvicorn instance.
+operational ``/health`` route (load balancers + the compose healthcheck),
+served by a single uvicorn instance.
 """
 
 from __future__ import annotations

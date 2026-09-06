@@ -19,9 +19,8 @@ def configure_logging(debug: bool = False) -> None:
     plain single-line format so no ANSI escape codes leak into the logs.
 
     NOTE: the plain format ``%(asctime)s %(levelname)s %(name)s: %(message)s``
-    is parsed by the Alloy pipelines into ``level`` / ``logger`` labels and the
-    entry timestamp — keep it in sync with ``k8s/alloy/config.alloy`` and
-    ``docker/alloy/config.alloy``.
+    is parsed by the Alloy pipeline into ``level`` / ``logger`` labels and the
+    entry timestamp — keep it in sync with ``docker/alloy/config.alloy``.
     """
     level = logging.DEBUG if debug else logging.INFO
     if sys.stderr.isatty():
