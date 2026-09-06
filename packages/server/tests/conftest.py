@@ -269,10 +269,41 @@ def _write_synthetic_dataset(base: Path) -> dict[str, dict[str, int]]:
     expected = {
         "cells": counts(cell_meta, "cells"),
         "images": counts(img_meta, "images"),
+        "payload_of": PayloadOracle(cell_meta, img_meta),
     }
     cell_meta.write_csv(base / "cell_embedding" / "metadata.csv")
     img_meta.write_csv(base / "image_embedding" / "metadata.csv")
     return expected
+
+
+class PayloadOracle:
+    """payload_of(view, row) → the payload dict the DSL should return.
+
+    Mirrors the ingest pipeline exactly: keys sanitized (spaces → `_`,
+    lowercased), None values dropped. Built from the same frames that were
+    written to the fixture CSVs, so expectations can never drift from data.
+    """
+
+    def __init__(self, cell_meta: pl.DataFrame, img_meta: pl.DataFrame) -> None:
+        self._frames = {"cells": cell_meta, "images": img_meta}
+        self._cache: dict[str, list[dict[str, Any]]] = {}
+
+    def __call__(self, view: str, row: int) -> dict[str, Any]:
+        import re
+
+        if view not in self._cache:
+            clean = re.compile(r"[^0-9A-Za-z]+")
+            rows: list[dict[str, Any]] = []
+            for record in self._frames[view].iter_rows(named=True):
+                rows.append(
+                    {
+                        clean.sub("_", k).strip("_").lower(): v
+                        for k, v in record.items()
+                        if v is not None
+                    }
+                )
+            self._cache[view] = rows
+        return self._cache[view][row]
 
 
 @pytest.fixture(scope="session")
