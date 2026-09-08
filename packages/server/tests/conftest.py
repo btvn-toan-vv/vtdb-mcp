@@ -289,6 +289,10 @@ class PayloadOracle:
         self._cache: dict[str, list[dict[str, Any]]] = {}
 
     def __call__(self, view: str, row: int) -> dict[str, Any]:
+        return self.all(view)[row]
+
+    def all(self, view: str) -> list[dict[str, Any]]:
+        """All payload rows for the view (sanitized, None dropped, insertion order)."""
         import re
 
         if view not in self._cache:
@@ -303,7 +307,11 @@ class PayloadOracle:
                     }
                 )
             self._cache[view] = rows
-        return self._cache[view][row]
+        return self._cache[view]
+
+    def frame(self, view: str) -> pl.DataFrame:
+        """The payloads as a polars DataFrame — gold-truth aggregate engine."""
+        return pl.DataFrame(self.all(view))
 
 
 @pytest.fixture(scope="session")
