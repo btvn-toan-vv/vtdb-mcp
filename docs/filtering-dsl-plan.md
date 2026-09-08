@@ -27,6 +27,9 @@ Everything else is as written below.
   is fetched and passed explicitly (Qdrant's id-as-query self-excludes, which
   the tests pin otherwise); ANN by default, `exact=True` for deterministic
   brute-force within the filtered set (contract: `tests/test_search.py`).
+- 2026-09-06: `.sortby()` on Rows — meta/groupby/search return chainable
+  list-subclass (missing keys sort last; stable); resolved as *method* after a
+  rejected free-`sort()` draft (contract: `tests/test_sort.py`).
 - 2026-09-06: search signature finalized as `search(among=None|FilterExpr,
   k=10, like=int|list[int]|FilterExpr, columns=None, with_vector=False,
   exact=False)` — `among` names the candidate pool; `like` aggregates multiple

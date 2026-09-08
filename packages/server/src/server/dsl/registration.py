@@ -11,6 +11,7 @@ from __future__ import annotations
 from server.core.context import VtdbSymbolContext
 from server.dsl.aggregations import AggExpr, row_count
 from server.dsl.expressions import FieldExpr, FilterExpr, StrExpr, col
+from server.dsl.sorting import Rows
 from server.dsl.views import FilteredView, GroupBy, ViewHandle, database
 
 
@@ -26,6 +27,7 @@ def register_dsl_symbols(ctx: VtdbSymbolContext) -> None:
         ViewHandle,
         FilteredView,
         GroupBy,
+        Rows,
     ):
         # method_filter=None: discover all public methods + allowed dunders
         # (the default () registers NO methods — silent dead surface).

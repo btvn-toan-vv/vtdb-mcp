@@ -24,6 +24,7 @@ from server.dsl.aggregations import (
 from server.dsl.expressions import DSLUsageError, FilterExpr, iter_fields
 from server.dsl.qdrant_filter import to_qdrant_filter
 from server.dsl.schema import FIELDS, VIEW_ALIASES
+from server.dsl.sorting import Rows, as_rows
 from server.services.qdrant import get_client
 
 logger = logging.getLogger(__name__)
@@ -146,7 +147,7 @@ class ViewHandle:
         query: FilterExpr | list[int] | int | None,
         columns: list[str] | None = None,
         limit: int = _DEFAULT_META_LIMIT,
-    ) -> list[dict[str, Any]]:
+    ) -> Rows:
         """Full metadata rows for a filter / id list / single id / all rows.
 
         Rows are payload dicts with the point id attached under ``"id"``.
@@ -182,7 +183,7 @@ class ViewHandle:
             logger.info(
                 "meta %s: %d rows (limit=%d)", self._collection, len(rows), limit
             )
-            return rows
+            return as_rows(rows)
 
         if isinstance(query, int) and not isinstance(query, bool):
             ids = [query]
@@ -210,7 +211,7 @@ class ViewHandle:
         by_id = {int(r.id): self._row(r, cols) for r in records}
         rows = [by_id[i] for i in ids if i in by_id]  # request order; drops missing
         logger.info("meta %s: %d/%d ids", self._collection, len(rows), len(ids))
-        return rows
+        return as_rows(rows)
 
     # -- filtered top-k search (tests/test_search.py pins the contract) ------
 
@@ -296,7 +297,7 @@ class ViewHandle:
         columns: list[str] | None = None,
         with_vector: bool = False,
         exact: bool = False,
-    ) -> list[dict[str, Any]]:
+    ) -> Rows:
         """Top-k payload rows by similarity to ``like``, **among** a filtered pool.
 
         ``like`` (first arg) is a point id, a list of point ids (centroid), or
@@ -342,7 +343,7 @@ class ViewHandle:
         logger.info(
             "search %s: %d hits (k=%d, like=%d)", self._collection, len(rows), k, like
         )
-        return rows
+        return as_rows(rows)
 
     # -- grouping entry point ----------------------------------------------
 
@@ -416,7 +417,7 @@ class FilteredView:
         query: FilterExpr | list[int] | int | None = None,
         columns: list[str] | None = None,
         limit: int = _DEFAULT_META_LIMIT,
-    ) -> list[dict[str, Any]]:
+    ) -> Rows:
         """meta(None)/meta(filter) apply the where filter (ANDed); meta(ids) is
         rejected — id fetches don't compose meaningfully with a prefilter."""
         if isinstance(query, FilterExpr):
@@ -461,7 +462,7 @@ class GroupBy:
         self._among = among
         self._limit = limit
 
-    def agg(self, *exprs: AggExpr) -> list[dict[str, Any]]:
+    def agg(self, *exprs: AggExpr) -> Rows:
         """Aggregate each group: ``.agg(col("t").mean(), row_count())``."""
         if not exprs:
             raise DSLUsageError(
@@ -538,7 +539,7 @@ class GroupBy:
 
         df = pl.DataFrame(records) if records else None
         if df is None or df.is_empty():
-            out: list[dict[str, Any]] = []
+            out: Rows = Rows()
             logger.info("groupby %s on %s: 0 rows", self._by, handle.collection)
             return out
 
@@ -600,7 +601,7 @@ class GroupBy:
             n_groups,
             df.height,
         )
-        return grouped.to_dicts()
+        return as_rows(grouped.to_dicts())
 
 
 def database(name: str) -> ViewHandle:
