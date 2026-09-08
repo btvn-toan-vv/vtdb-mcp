@@ -194,7 +194,6 @@ def _write_synthetic_dataset(base: Path) -> dict[str, dict[str, int]]:
     Payload columns mirror the real dataset's schema (sanitized at ingest).
     Both views get None coverage so is_null paths have real rows.
     """
-    rng = np.random.default_rng(7)
     n_cells, n_images = 240, 120
     cell_line_cycle = ["U2OS", "HeLa", "MCF-7"]
 
@@ -237,16 +236,13 @@ def _write_synthetic_dataset(base: Path) -> dict[str, dict[str, int]]:
             "umap3d z": [float((i * 11) % 17) - 8.0 for i in range(n_images)],
         }
     )
+    # embeddings are generated LAST (from the same seeded rng stream the counts
+    # draw on -- order matters) and saved later, after the expected dict saw them
+    rng_emb = np.random.default_rng(7)
+    cell_emb = rng_emb.random((n_cells, CELLS.dims), dtype=np.float32)
+    img_emb = rng_emb.random((n_images, IMAGES.dims), dtype=np.float32)
     for sub in ("cell_embedding", "image_embedding"):
         (base / sub).mkdir(parents=True, exist_ok=False)
-    np.save(
-        base / "cell_embedding" / "embeddings.npy",
-        rng.random((n_cells, CELLS.dims), dtype=np.float32),
-    )
-    np.save(
-        base / "image_embedding" / "embeddings.npy",
-        rng.random((n_images, IMAGES.dims), dtype=np.float32),
-    )
 
     def counts(df: pl.DataFrame, view: str) -> dict[str, int]:
         cl, comp = df["cell line"], df["compartment"]
@@ -270,9 +266,13 @@ def _write_synthetic_dataset(base: Path) -> dict[str, dict[str, int]]:
         "cells": counts(cell_meta, "cells"),
         "images": counts(img_meta, "images"),
         "payload_of": PayloadOracle(cell_meta, img_meta),
+        # raw vectors for score ground truth (pairwise cosine etc.)
+        "vectors": {"cells": cell_emb, "images": img_emb},
     }
     cell_meta.write_csv(base / "cell_embedding" / "metadata.csv")
     img_meta.write_csv(base / "image_embedding" / "metadata.csv")
+    np.save(base / "cell_embedding" / "embeddings.npy", cell_emb)
+    np.save(base / "image_embedding" / "embeddings.npy", img_emb)
     return expected
 
 
