@@ -113,3 +113,39 @@ def test_live_cell_path_null_count(call_tool) -> None:
         {"code": 'output({"n": database("cells").count(col("cell_path").is_null())})'},
     )
     assert result.data["result"]["n"] == 102_042
+
+
+def test_live_meta_default_cap_message(call_tool) -> None:
+    # The loud default-cap error must now teach the two right moves, since the
+    # legendary trap was "pass limit=5 → error anyway".
+    result = call_tool(
+        "query",
+        {"code": 'output({"rows": database("cells").meta(None)})'},
+    )
+    error = result.data["error"]
+    assert error["type"] == "DSLUsageError"
+    assert "truncates" in error["message"]  # explains explicit-limit semantics
+    assert "resolve_ids" in error["message"]  # points at the sampling idiom
+
+
+def test_live_meta_explicit_limit_truncates(call_tool) -> None:
+    rows = call_tool(
+        "query",
+        {"code": 'output({"rows": database("cells").meta(None, limit=3)})'},
+    ).data["result"]["rows"]
+    assert len(rows) == 3
+    assert [r["id"] for r in rows] == [0, 1, 2]
+
+
+def test_live_groupby_limit_message(call_tool) -> None:
+    # Real data has >1000 genes per cell_line, so default group_by caps trip;
+    # the error must name the correct kwarg placement (the famous session trap).
+    result = call_tool(
+        "query",
+        {
+            "code": 'output({"rows": database("images").group_by("genes").agg(row_count())})'
+        },
+    )
+    error = result.data["error"]
+    assert error["type"] == "DSLUsageError"
+    assert ".agg(..., limit=" in error["message"]

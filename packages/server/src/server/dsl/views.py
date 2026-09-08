@@ -146,25 +146,38 @@ class ViewHandle:
         self,
         query: FilterExpr | list[int] | int | None,
         columns: list[str] | None = None,
-        limit: int = _DEFAULT_META_LIMIT,
+        limit: int | None = None,
     ) -> Rows:
         """Full metadata rows for a filter / id list / single id / all rows.
 
         Rows are payload dicts with the point id attached under ``"id"``.
         Order: id-inputs preserve request order (missing ids are dropped);
-        filter/None inputs follow scroll order. `limit` fails loudly BEFORE
-        fetching (no silent caps).
+        filter/None inputs follow scroll order.
+
+        Limit semantics — the trap the docs must state: by DEFAULT results
+        bigger than 10k error loudly (never silently). Passing limit=N
+        explicitly TRUNCATES to the first N rows (scroll order). To sample,
+        slice ids: ``meta(db.resolve_ids(f)[:N])``.
         """
         cols = self._validate_columns(columns)
+        effective = _DEFAULT_META_LIMIT if limit is None else limit
+        if (
+            not isinstance(effective, int)
+            or isinstance(effective, bool)
+            or effective <= 0
+        ):
+            raise DSLUsageError(f"limit= needs a positive int, got {effective!r}")
 
         if isinstance(query, FilterExpr) or query is None:
             self._validate_fields(query)
             filt = to_qdrant_filter(query)
             n = self.count(query)
-            if n > limit:
+            if n > effective and limit is None:
                 raise DSLUsageError(
-                    f"meta would return {n} rows, over the limit"
-                    f" ({limit}). Tighten the filter or pass limit= explicitly."
+                    f"meta would return {n} rows, over the default cap of "
+                    f"{_DEFAULT_META_LIMIT}. Pass limit=N to fetch up to N "
+                    "(explicit limit truncates), or sample via "
+                    "resolve_ids(...)[:N]"
                 )
             rows: list[dict[str, Any]] = []
             offset: Any = None
@@ -178,10 +191,13 @@ class ViewHandle:
                     with_vectors=False,
                 )
                 rows.extend(self._row(p, cols) for p in page)
+                if limit is not None and len(rows) >= effective:
+                    rows = rows[:effective]
+                    offset = None  # explicit limit is a slice — stop reading
                 if offset is None:
                     break
             logger.info(
-                "meta %s: %d rows (limit=%d)", self._collection, len(rows), limit
+                "meta %s: %d rows (limit=%d)", self._collection, len(rows), effective
             )
             return as_rows(rows)
 
@@ -197,9 +213,11 @@ class ViewHandle:
                 "(col(...) == ...), or None for all rows"
             )
 
-        if len(ids) > limit:
+        if len(ids) > effective:
+            # Ids are exact answers — truncation here would quietly drop
+            # requested rows. Raise instead (unlike the filter scroll path).
             raise DSLUsageError(
-                f"meta got {len(ids)} ids, over the limit ({limit})."
+                f"meta got {len(ids)} ids, over the limit ({effective})."
                 " Pass fewer ids or raise limit=."
             )
         records = get_client().retrieve(
@@ -462,8 +480,14 @@ class GroupBy:
         self._among = among
         self._limit = limit
 
-    def agg(self, *exprs: AggExpr) -> Rows:
-        """Aggregate each group: ``.agg(col("t").mean(), row_count())``."""
+    def agg(self, *exprs: AggExpr, limit: int | None = None) -> Rows:
+        """Aggregate each group: ``.agg(col("t").mean(), row_count())``.
+
+        ``limit=`` here overrides the group cap from group_by(..., limit=).
+        """
+        cap = self._limit if limit is None else limit
+        if not isinstance(cap, int) or isinstance(cap, bool) or cap <= 0:
+            raise DSLUsageError(f"limit= needs a positive int, got {cap!r}")
         if not exprs:
             raise DSLUsageError(
                 "agg() needs at least one aggregation: col('x').mean(), "
@@ -589,10 +613,11 @@ class GroupBy:
             .sort(self._by, nulls_last=False)
         )
         n_groups = grouped.height
-        if n_groups > self._limit:
+        if n_groups > cap:
             raise DSLUsageError(
-                f"group_by produced {n_groups} groups, over the limit"
-                f" ({self._limit}). Tighten with among=/where() or pass limit=."
+                f"group_by produced {n_groups} groups, over the limit ({cap}). "
+                f"Raise it: group_by({self._by!r}, limit={n_groups}) or "
+                f".agg(..., limit={n_groups}); or narrow first with among=/where()."
             )
         logger.info(
             "groupby %s on %s: %d groups from %d rows",

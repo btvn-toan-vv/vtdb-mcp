@@ -112,13 +112,24 @@ def test_meta_unknown_column(call_tool, hermetic_env) -> None:
     assert "cell_line" in error["message"]  # available list offered
 
 
-def test_meta_limit_guard(call_tool, hermetic_env) -> None:
-    # Fixture has 240 cells; cap 5 should trip loudly, not truncate silently.
-    result = call_tool(
-        "query",
-        {"code": 'output({"rows": database("cells").meta(None, limit=5)})'},
+def test_meta_explicit_limit_truncates(call_tool, hermetic_env) -> None:
+    # since 2026-09: explicit limit=N TRUNCATES (scroll order) — no longer the
+    # error that made sampling impossible. Sampling recipe: resolve_ids()[:N].
+    rows = _meta(
+        call_tool,
+        'output({"rows": database("cells").meta(None, limit=5)})',
     )
-    assert "limit" in result.data["error"]["message"]
+    assert [r["id"] for r in rows] == [0, 1, 2, 3, 4]
+
+
+def test_meta_default_cap_still_loud(call_tool, hermetic_env) -> None:
+    # The 10k default cap itself isn't exercisable hermetically (fixture=240),
+    # but the error messaging contract is pinned live (test_filtering_live).
+    # Here: passing the DISABLED-sentinel explicitly shows the fixture fully.
+    rows = _meta(
+        call_tool, 'output({"rows": database("cells").meta(None, limit=10000)})'
+    )
+    assert len(rows) == 240  # full fixture well under the cap
 
 
 def test_meta_missing_ids_are_dropped(call_tool, hermetic_env) -> None:

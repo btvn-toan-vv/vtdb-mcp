@@ -55,6 +55,12 @@ rows.sortby("count")                            # sort asc; last with no key
 rows.sortby("cell_line", "count", descending=True)   # multi-key, ties in order
 ```
 
+**LIMITS (the trap everyone hits):** — meta caps at 10k rows by default and
+ERRORS when the filter exceeds it; `limit=N` explicitly **truncates to N rows**
+(first N in scroll order). To sample rows: `db.meta(db.resolve_ids(f)[:N])`.
+Group counts cap at 1000 by default; raise via `group_by(keys, limit=N)` —
+also accepted as `.agg(..., limit=N)` for convenience.
+
 # groupby + aggregate (polars-shaped; runs server-side via polars):
 db.group_by("cell_line").agg(row_count(), col("time_ms").mean())
 db.group_by(["cell_line", "compartment"]).agg(col("time_ms").max().alias("tmax"))

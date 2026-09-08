@@ -233,6 +233,29 @@ def test_groupby_limit_fails_loud(call_tool, hermetic_env) -> None:
     assert "limit" in result.data["error"]["message"]
 
 
+def test_groupby_agg_limit_override(call_tool, hermetic_env) -> None:
+    # limit= on agg() itself works too (same as group_by(limit=)) — the error
+    # message in the wild named only "pass limit=", so both paths exist now.
+    rows = _agg_rows(
+        call_tool,
+        'output({"rows": database("cells").group_by("position").agg(row_count(), limit=200)})',
+    )
+    assert len(rows) == 96
+
+    result = call_tool(
+        "query",
+        {
+            "code": dedent_code(
+                'output({"rows": database("cells").group_by("position").agg(row_count(), limit=3)})'
+            )
+        },
+    )
+    error = result.data["error"]
+    assert error["type"] == "DSLUsageError"
+    # the message must show the exact remedy — no "pass limit=" vagueness
+    assert "group_by(" in error["message"] and ".agg(..., limit=" in error["message"]
+
+
 def test_groupby_empty_match_is_empty(call_tool, hermetic_env) -> None:
     rows = _agg_rows(
         call_tool,
