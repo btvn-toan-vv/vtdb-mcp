@@ -27,6 +27,9 @@ Everything else is as written below.
   is fetched and passed explicitly (Qdrant's id-as-query self-excludes, which
   the tests pin otherwise); ANN by default, `exact=True` for deterministic
   brute-force within the filtered set (contract: `tests/test_search.py`).
+- 2026-09-06: `ViewHandle.pairwise(ids|filter)` — upper-triangle cosine rows
+  `{id_a, id_b, score}`, Rows-chained `.sortby(...)`; cap counts PAIRS
+  (C(n,2)); missing anchors error by name (contract: `tests/test_pairwise.py`).
 - 2026-09-06: `.sortby()` on Rows — meta/groupby/search return chainable
   list-subclass (missing keys sort last; stable); resolved as *method* after a
   rejected free-`sort()` draft (contract: `tests/test_sort.py`).

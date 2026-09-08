@@ -25,10 +25,6 @@ from fastmcp.client.client import CallToolResult
 
 from .conftest import dedent_code
 
-pytestmark = pytest.mark.xfail(
-    strict=True, reason="ViewHandle.pairwise not implemented yet — review draft"
-)
-
 
 def _pairs(call_tool, code: str) -> list[dict]:
     result: CallToolResult = call_tool("query", {"code": dedent_code(code)})

@@ -50,6 +50,10 @@ db.meta(f, columns=["cell_line", "gene_names"])   # projected rows
 db.search(like=ID, among=f, k=10)                 # top-k by cosine
 # rows: {"id", "score", ...payload}; add with_vector=True for the embedding
 
+db.pairwise(ids_or_f)                             # cosine rows per pair:
+# {"id_a", "id_b", "score"}, id_a < id_b, no self-pairs, C(n,2) rows —
+# cap 10k pair rows: db.pairwise(f, limit=N) raises; chain .sortby("score")
+
 # chaining (Rows): every rows-returning read is a list subclass —
 rows.sortby("count")                            # sort asc; last with no key
 rows.sortby("cell_line", "count", descending=True)   # multi-key, ties in order

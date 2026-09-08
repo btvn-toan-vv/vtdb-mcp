@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_ID_LIMIT = 100_000
 _DEFAULT_META_LIMIT = 10_000
+_DEFAULT_PAIR_LIMIT = 10_000  # cap counts *pair rows* (C(n,2)), not ids
 _SCROLL_PAGE = 4_096
 
 
@@ -361,6 +362,81 @@ class ViewHandle:
         logger.info(
             "search %s: %d hits (k=%d, like=%d)", self._collection, len(rows), k, like
         )
+        return as_rows(rows)
+
+    # -- pairwise cosine rows (tests/test_pairwise.py pins the contract) ------
+
+    def pairwise(
+        self,
+        query: FilterExpr | list[int] | int | None = None,
+        limit: int = _DEFAULT_PAIR_LIMIT,
+    ) -> Rows:
+        """Cosine similarity for every id pair in the selection (upper triangle).
+
+        Rows are ``{"id_a", "id_b", "score"}`` with id_a < id_b, ordered by
+        (id_a, id_b). Selection: id list / single id / filter / None (whole
+        view). Pairs = C(n, 2) — the cap counts PAIR ROWS, not ids, and fails
+        loudly with the exact ``limit=`` fix. Missing anchor ids error by name.
+        Returns ``Rows`` so ``.sortby("score", descending=True)`` chains.
+        """
+        if isinstance(query, bool):
+            ids: list[int] = []
+        elif isinstance(query, int):
+            ids = [query]
+        elif isinstance(query, list) and all(
+            isinstance(i, int) and not isinstance(i, bool) for i in query
+        ):
+            ids = list(query)
+        elif isinstance(query, FilterExpr) or query is None:
+            self._validate_fields(query)
+            ids = self.resolve_ids(query)
+        else:
+            raise DSLUsageError(
+                "pairwise() expects an id list, a single id, a filter "
+                "expression, or None (whole view)"
+            )
+
+        n = len(ids)
+        pairs = n * (n - 1) // 2
+        if pairs > limit:
+            raise DSLUsageError(
+                f"pairwise over {n} rows would yield {pairs} pairs, over the "
+                f"limit ({limit}). Raise it with limit={pairs}, or narrow the "
+                "selection first."
+            )
+        if n < 2:
+            return Rows()  # pairs need two — empty is the answer
+
+        records = get_client().retrieve(
+            collection_name=self._collection,
+            ids=ids,
+            with_payload=False,
+            with_vectors=True,
+        )
+        found = {int(r.id) for r in records}
+        missing = [i for i in ids if i not in found]
+        if missing:
+            raise DSLUsageError(
+                f"anchor id(s) {missing[:5]}{'…' if len(missing) > 5 else ''} "
+                f"not found in view {self._collection!r}"
+            )
+
+        by_id = {int(r.id): r.vector for r in records}
+        sorted_ids = sorted(ids)  # == (id_a asc) ordering for triu below
+        mat = np.asarray([by_id[i] for i in sorted_ids], dtype=np.float32)
+        norms = np.linalg.norm(mat, axis=1)
+        norms[norms == 0] = 1.0  # degenerate rows → zero scores instead of NaN
+        sim = (mat / norms[:, None]) @ (mat / norms[:, None]).T
+        iu = np.triu_indices(n, k=1)  # row-major: (id_a asc, id_b asc)
+        rows = [
+            {
+                "id_a": sorted_ids[i],
+                "id_b": sorted_ids[j],
+                "score": float(sim[i, j]),
+            }
+            for i, j in zip(iu[0], iu[1], strict=True)
+        ]
+        logger.info("pairwise %s: %d pairs over %d ids", self._collection, len(rows), n)
         return as_rows(rows)
 
     # -- grouping entry point ----------------------------------------------
