@@ -49,6 +49,13 @@ db.meta(ids_or_f)             # list[dict] — payload rows, "id" attached
 db.meta(f, columns=["cell_line", "gene_names"])   # projected rows
 db.search(like=ID, among=f, k=10)                 # top-k by cosine
 # rows: {"id", "score", ...payload}; add with_vector=True for the embedding
+
+# groupby + aggregate (polars-shaped; runs server-side via polars):
+db.group_by("cell_line").agg(row_count(), col("time_ms").mean())
+db.group_by(["cell_line", "compartment"]).agg(col("time_ms").max().alias("tmax"))
+db.where(f).group_by("cell_line").agg(row_count())   # filter, then group
+# aggregations: count/sum/mean/median/min/max/std/var/quantile(q)/first/last/
+# n_unique; .alias("name") renames; rows sorted by group keys (asc).
 ```
 
 ### Filters (polars-style expression trees)

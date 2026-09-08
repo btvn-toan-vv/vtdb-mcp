@@ -151,6 +151,74 @@ class FieldExpr:
     def str(self) -> StrExpr:
         return StrExpr(self.name)
 
+    # -- aggregations (valid only inside group_by(...).agg(...)) -----------
+    # Polars parity: col("x").mean().alias("m") — see dsl/aggregations.py.
+    def count(self) -> Any:
+        from server.dsl.aggregations import _agg
+
+        return _agg(self, "count")
+
+    def sum(self) -> Any:
+        from server.dsl.aggregations import _agg
+
+        return _agg(self, "sum")
+
+    def mean(self) -> Any:
+        from server.dsl.aggregations import _agg
+
+        return _agg(self, "mean")
+
+    def median(self) -> Any:
+        from server.dsl.aggregations import _agg
+
+        return _agg(self, "median")
+
+    def min(self) -> Any:
+        from server.dsl.aggregations import _agg
+
+        return _agg(self, "min")
+
+    def max(self) -> Any:
+        from server.dsl.aggregations import _agg
+
+        return _agg(self, "max")
+
+    def std(self) -> Any:
+        from server.dsl.aggregations import _agg
+
+        return _agg(self, "std")
+
+    def var(self) -> Any:
+        from server.dsl.aggregations import _agg
+
+        return _agg(self, "var")
+
+    def quantile(self, q: float) -> Any:
+        from server.dsl.aggregations import _agg
+
+        if (
+            not isinstance(q, (int, float))
+            or isinstance(q, bool)
+            or not 0.0 <= q <= 1.0
+        ):
+            raise DSLUsageError(f"quantile() needs q in [0, 1], got {q!r}")
+        return _agg(self, "quantile", q=float(q))
+
+    def first(self) -> Any:
+        from server.dsl.aggregations import _agg
+
+        return _agg(self, "first")
+
+    def last(self) -> Any:
+        from server.dsl.aggregations import _agg
+
+        return _agg(self, "last")
+
+    def n_unique(self) -> Any:
+        from server.dsl.aggregations import _agg
+
+        return _agg(self, "n_unique")
+
     def __bool__(self) -> bool:
         raise _ast_usage_error(f"col({self.name!r})")
 

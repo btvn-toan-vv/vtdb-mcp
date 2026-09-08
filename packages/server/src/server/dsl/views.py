@@ -13,8 +13,14 @@ import logging
 from typing import Any
 
 import numpy as np
+import polars as pl
 from qdrant_client import models
 
+from server.dsl.aggregations import (
+    NUMERIC_ONLY_OPS,
+    AggExpr,
+    default_alias,
+)
 from server.dsl.expressions import DSLUsageError, FilterExpr, iter_fields
 from server.dsl.qdrant_filter import to_qdrant_filter
 from server.dsl.schema import FIELDS, VIEW_ALIASES
@@ -337,6 +343,264 @@ class ViewHandle:
             "search %s: %d hits (k=%d, like=%d)", self._collection, len(rows), k, like
         )
         return rows
+
+    # -- grouping entry point ----------------------------------------------
+
+    def group_by(
+        self, by: str | list[str], among: FilterExpr | None = None, limit: int = 1000
+    ) -> GroupBy:
+        """Group rows by one or more payload fields; .agg(...) then aggregates."""
+        if isinstance(by, str):
+            by = [by]
+        if (
+            not isinstance(by, list)
+            or not by
+            or not all(isinstance(b, str) for b in by)
+        ):
+            raise DSLUsageError(
+                "group_by() expects a field name or a non-empty list of them"
+            )
+        return GroupBy(self, by, among=among, limit=limit)
+
+    def where(self, expr: FilterExpr) -> FilteredView:
+        """Filter this view for the next read — x.where(f).group_by(...)."""
+        if not isinstance(expr, FilterExpr):
+            raise DSLUsageError(
+                "where() expects a filter expression like col('x') == 1"
+            )
+        return FilteredView(self, expr)
+
+
+def _compose_and(a: FilterExpr | None, b: FilterExpr | None) -> FilterExpr | None:
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return FilterExpr({"kind": "and", "parts": [a.node, b.node]})
+
+
+class FilteredView:
+    """A view handle with a permanent pre-filter (from ``db.where(expr)``).
+
+    Every read method forwards to the underlying handle with the stored filter
+    ANDed onto the call-local one. ``group_by`` is the star: where-then-group.
+    """
+
+    def __init__(self, handle: ViewHandle, expr: FilterExpr) -> None:
+        self._handle = handle
+        self._filter = expr
+
+    @property
+    def collection(self) -> str:
+        return self._handle.collection
+
+    def where(self, expr: FilterExpr) -> FilteredView:
+        if not isinstance(expr, FilterExpr):
+            raise DSLUsageError(
+                "where() expects a filter expression like col('x') == 1"
+            )
+        combined = _compose_and(self._filter, expr)
+        assert combined is not None
+        return FilteredView(self._handle, combined)
+
+    def count(self, expr: FilterExpr | None = None) -> int:
+        return self._handle.count(_compose_and(self._filter, expr))
+
+    def resolve_ids(
+        self, expr: FilterExpr | None = None, limit: int = _DEFAULT_ID_LIMIT
+    ) -> list[int]:
+        return self._handle.resolve_ids(_compose_and(self._filter, expr), limit=limit)
+
+    def meta(
+        self,
+        query: FilterExpr | list[int] | int | None = None,
+        columns: list[str] | None = None,
+        limit: int = _DEFAULT_META_LIMIT,
+    ) -> list[dict[str, Any]]:
+        """meta(None)/meta(filter) apply the where filter (ANDed); meta(ids) is
+        rejected — id fetches don't compose meaningfully with a prefilter."""
+        if isinstance(query, FilterExpr):
+            return self._handle.meta(
+                _compose_and(self._filter, query), columns=columns, limit=limit
+            )
+        if query is None:
+            return self._handle.meta(self._filter, columns=columns, limit=limit)
+        raise DSLUsageError(
+            "meta() by id(s) can't combine with where(); pass a filter instead "
+            "of ids (or call meta on the unfiltered database() handle)"
+        )
+
+    def group_by(
+        self, by: str | list[str], among: FilterExpr | None = None, limit: int = 1000
+    ) -> GroupBy:
+        """Group the pre-filtered view (and compose any call-local prefilter)."""
+        return self._handle.group_by(
+            by, among=_compose_and(self._filter, among), limit=limit
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"FilteredView({self.collection}, filter={self._filter.node!r})"
+            " — finish with .group_by(...).agg(...), .count(), .resolve_ids(),"
+            " .meta(...),  or another .where(...)"
+        )
+
+
+class GroupBy:
+    """Concrete pending-aggregation state: handle + by-keys + composed filter."""
+
+    def __init__(
+        self,
+        handle: ViewHandle,
+        by: list[str],
+        among: FilterExpr | None,
+        limit: int,
+    ) -> None:
+        self._handle = handle
+        self._by = by
+        self._among = among
+        self._limit = limit
+
+    def agg(self, *exprs: AggExpr) -> list[dict[str, Any]]:
+        """Aggregate each group: ``.agg(col("t").mean(), row_count())``."""
+        if not exprs:
+            raise DSLUsageError(
+                "agg() needs at least one aggregation: col('x').mean(), "
+                "row_count(), ..."
+            )
+        for e in exprs:
+            if not isinstance(e, AggExpr):
+                raise DSLUsageError(
+                    "agg() takes aggregation expressions (col('x').mean(), "
+                    f"row_count()), got {type(e).__name__}"
+                )
+
+        handle = self._handle
+        fields = FIELDS[handle.collection]
+
+        def _known(name: str | None) -> None:
+            if name is not None and name not in fields:
+                available = ", ".join(sorted(fields))
+                raise UnknownFieldError(
+                    f"unknown field for view {handle.collection!r}: {name}. "
+                    f"Available: {available}"
+                )
+
+        for key in self._by:
+            _known(key)
+
+        jobs: list[tuple[str, dict[str, Any]]] = []
+        seen_names: set[str] = set()
+        for e in exprs:
+            node = e.node
+            job_name = node.get("alias") or (
+                "count"
+                if node["op"] == "row_count"
+                else default_alias(
+                    node["field"], node["op"], node.get("params", {}).get("q")
+                )
+            )
+            if job_name in seen_names:
+                raise DSLUsageError(
+                    f"duplicate output column {job_name!r} in agg() — "
+                    "rename one with .alias('...')"
+                )
+            seen_names.add(job_name)
+            if node["op"] != "row_count":
+                _known(node["field"])
+                kind = fields[node["field"]]
+                if node["op"] in NUMERIC_ONLY_OPS and kind not in ("int", "float"):
+                    raise DSLUsageError(
+                        f"aggregation {node['op']} needs a numeric field; "
+                        f"{node['field']!r} is {kind}"
+                    )
+            jobs.append((job_name, node))
+
+        # Fetch only what aggregation needs: by-keys + aggregated fields.
+        payload_fields = set(self._by) | {j[1]["field"] for j in jobs if j[1]["field"]}
+        filt = to_qdrant_filter(self._among)
+        client = get_client()
+        records: list[dict[str, Any]] = []
+        offset: Any = None
+        while True:
+            page, offset = client.scroll(
+                collection_name=handle.collection,
+                scroll_filter=filt,
+                limit=_SCROLL_PAGE,
+                offset=offset,
+                with_payload=sorted(payload_fields) if payload_fields else True,
+                with_vectors=False,
+            )
+            for p in page:
+                records.append(dict(p.payload or {}))
+            if offset is None:
+                break
+
+        df = pl.DataFrame(records) if records else None
+        if df is None or df.is_empty():
+            out: list[dict[str, Any]] = []
+            logger.info("groupby %s on %s: 0 rows", self._by, handle.collection)
+            return out
+
+        pl_exprs: list[Any] = []
+        for job_name, node in jobs:
+            if node["op"] == "row_count":
+                pl_exprs.append(pl.len().alias(job_name))
+                continue
+            f = node["field"]
+            op = node["op"]
+            q = node.get("params", {}).get("q")
+            c = pl.col(f)
+            pl_expr = (
+                c.count()
+                if op == "count"
+                else c.sum()
+                if op == "sum"
+                else c.mean()
+                if op == "mean"
+                else c.median()
+                if op == "median"
+                else c.min()
+                if op == "min"
+                else c.max()
+                if op == "max"
+                else c.std()
+                if op == "std"
+                else c.var()
+                if op == "var"
+                else c.quantile(q, interpolation="nearest")
+                if op == "quantile"
+                else c.first()
+                if op == "first"
+                else c.last()
+                if op == "last"
+                else c.n_unique()
+                if op == "n_unique"
+                else None
+            )
+            assert pl_expr is not None, node
+            pl_exprs.append(pl_expr.alias(job_name))
+
+        grouped = (
+            df.group_by(self._by)
+            .agg(*pl_exprs)
+            # ascending, nulls first (polars sort kwarg is nulls_last)
+            .sort(self._by, nulls_last=False)
+        )
+        n_groups = grouped.height
+        if n_groups > self._limit:
+            raise DSLUsageError(
+                f"group_by produced {n_groups} groups, over the limit"
+                f" ({self._limit}). Tighten with among=/where() or pass limit=."
+            )
+        logger.info(
+            "groupby %s on %s: %d groups from %d rows",
+            self._by,
+            handle.collection,
+            n_groups,
+            df.height,
+        )
+        return grouped.to_dicts()
 
 
 def database(name: str) -> ViewHandle:

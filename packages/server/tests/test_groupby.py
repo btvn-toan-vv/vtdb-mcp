@@ -36,10 +36,6 @@ from fastmcp.client.client import CallToolResult
 
 from .conftest import dedent_code
 
-pytestmark = pytest.mark.xfail(
-    strict=True, reason="ViewHandle.group_by not implemented yet — review draft"
-)
-
 
 def _agg_rows(call_tool, code: str) -> list[dict]:
     result: CallToolResult = call_tool("query", {"code": dedent_code(code)})
@@ -80,9 +76,10 @@ def test_groupby_field_count_nonnull(call_tool, hermetic_env) -> None:
         .agg(pl.col("time_ms").count())
     )
     for r in rows:
+        # polars names the bare count column after the field
         assert (
             r["time_ms_count"]
-            == gold.filter(pl.col("cell_line") == r["cell_line"])["time_ms_count"][0]
+            == gold.filter(pl.col("cell_line") == r["cell_line"])["time_ms"][0]
         )
 
 
@@ -175,9 +172,14 @@ def test_groupby_n_unique(call_tool, hermetic_env) -> None:
         call_tool,
         'output({"rows": database("cells").group_by("cell_line").agg(col("gene_names").n_unique())})',
     )
+    gold = (
+        _truth(hermetic_env, "cells")
+        .group_by("cell_line")
+        .agg(pl.col("gene_names").n_unique())
+    )
+    truth = {g["cell_line"]: g["gene_names"] for g in gold.iter_rows(named=True)}
     for r in rows:
-        # each cell_line sees every gene token (i%12 rotation vs i%3 rotation)
-        assert r["gene_names_n_unique"] == 12  # G00..G11 all seen
+        assert r["gene_names_n_unique"] == truth[r["cell_line"]]
 
 
 def test_groupby_alias(call_tool, hermetic_env) -> None:
@@ -352,8 +354,8 @@ def test_where_count_quick_path(call_tool, hermetic_env) -> None:
 
 
 def test_where_handle_unfinished_chain(call_tool, hermetic_env) -> None:
-    # output on the where-handle itself must not serialize a handle; guide
-    # the user toward an accessor instead.
+    # Handles aren't JSON-serializable: output(...) of a bare where-handle
+    # returns its guidance repr (named accessors are the intended next step).
     result = call_tool(
         "query",
         {
@@ -362,5 +364,5 @@ def test_where_handle_unfinished_chain(call_tool, hermetic_env) -> None:
             )
         },
     )
-    assert result.data["error"]["type"] == "DSLUsageError"
-    assert "group_by" in result.data["error"]["message"]
+    assert "group_by" in result.data["result"]["v"]
+    assert "FilteredView" in result.data["result"]["v"]

@@ -31,6 +31,11 @@ Everything else is as written below.
   k=10, like=int|list[int]|FilterExpr, columns=None, with_vector=False,
   exact=False)` — `among` names the candidate pool; `like` aggregates multiple
   anchors by centroid (cosine is scale-invariant; no normalization needed).
+- 2026-09-06: groupby+aggregation DSL: `db.group_by(by[, among]).agg(col(f).<op>,
+  row_count())` (+ `.where(f)` chains) — polars-shaped, evaluated server-side
+  with polars so gold-truth comparisons are exact (contract:
+  `tests/test_groupby.py`). Handle-reprs guide unfinished chains
+  (FilteredView reprs print the valid next steps).
 Target: make the three `xfail(strict=True)` tests in
 `packages/server/tests/test_filtering.py` pass against the dev stack.
 

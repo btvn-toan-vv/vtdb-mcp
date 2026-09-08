@@ -6,9 +6,9 @@ unauthenticated `/health` next to it), modeled on
 biocircle trace→seal→run spine against a `VtdbSymbolContext` with the
 filtering DSL registered — `database(view)`, polars-style `col()` filter
 expressions, `db.resolve_ids(...)`, `db.count(...)`, `db.meta(ids_or_filter,
-columns=...)`, `db.search(like=<anchor id|[ids]|filter>, among=<filter|None>, k=10)`
-against Qdrant; see `docs/filtering-dsl-plan.md` and `docs/meta-feature-plan.md`)
-and `server_info`.
+columns=...)`, `db.search(...)`, `db.group_by(...).agg(...)`, and
+`db.where(...)` chains against Qdrant; see `docs/filtering-dsl-plan.md` and
+`docs/meta-feature-plan.md`) and `server_info`.
 
 ## Run locally
 

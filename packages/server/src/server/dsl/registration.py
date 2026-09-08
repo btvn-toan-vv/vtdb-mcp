@@ -9,15 +9,24 @@ registers the allowed dunder overloads + public methods).
 from __future__ import annotations
 
 from server.core.context import VtdbSymbolContext
+from server.dsl.aggregations import AggExpr, row_count
 from server.dsl.expressions import FieldExpr, FilterExpr, StrExpr, col
-from server.dsl.views import ViewHandle, database
+from server.dsl.views import FilteredView, GroupBy, ViewHandle, database
 
 
 def register_dsl_symbols(ctx: VtdbSymbolContext) -> None:
-    """Phase 1 vocabulary: database/col + the expression classes."""
-    for fn in (database, col):
+    """DSL vocabulary: database/col/row_count + the expression/handle classes."""
+    for fn in (database, col, row_count):
         ctx.function_context.registrar(fn)
-    for cls in (FieldExpr, StrExpr, FilterExpr, ViewHandle):
+    for cls in (
+        FieldExpr,
+        StrExpr,
+        FilterExpr,
+        AggExpr,
+        ViewHandle,
+        FilteredView,
+        GroupBy,
+    ):
         # method_filter=None: discover all public methods + allowed dunders
         # (the default () registers NO methods — silent dead surface).
         ctx.class_context.registrar(method_filter=None, category="dsl")(cls)

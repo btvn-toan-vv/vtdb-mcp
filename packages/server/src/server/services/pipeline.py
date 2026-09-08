@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import atexit
 import logging
+import math
 import re
 import threading
 import traceback
@@ -111,6 +112,7 @@ def execute_query(
         prepared = session.seal(record, sym_ctx)
         store = session.run_prepared(prepared, sym_ctx, timeout=timeout)
         value = unwrap_result(record.result, store)
+        value = _ensure_jsonable(value)
     except Exception as exc:  # noqa: BLE001
         logger.info("query execution failed: %s: %s", type(exc).__name__, exc)
         # biocircle wraps inner errors as "InnerType: message (func=...) (line N)"
@@ -123,3 +125,27 @@ def execute_query(
         return _error_result(err_type, message, debug)
 
     return {"result": value}
+
+
+def _ensure_jsonable(value: Any) -> Any:
+    """Deep JSON-safety pass over output() payloads.
+
+    FastMCP's structured output rejects non-JSON values by dropping them
+    (silent None → opaque client error). Walk containers; primitives pass,
+    anything else ships as its repr — so a bare DSL handle delivers its
+    guidance repr instead of vanishing.
+    """
+
+    def _walk(v: Any) -> Any:
+        if v is None or isinstance(v, (str, bool, int)):
+            return v
+        if isinstance(v, float):
+            return v if math.isfinite(v) else None
+        if isinstance(v, dict):
+            return {str(k): _walk(x) for k, x in v.items()}
+        if isinstance(v, (list, tuple)):
+            return [_walk(x) for x in v]
+        logger.info("non-JSON payload leaf replaced with repr (%s)", type(v).__name__)
+        return str(v)
+
+    return _walk(value)
